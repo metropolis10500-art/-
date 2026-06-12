@@ -1,20 +1,18 @@
 import asyncio
-import os
 import sqlite3
 import random
 from datetime import datetime, timedelta
-from dotenv import load_dotenv
 
 from aiogram import Bot, Dispatcher, F, types
 from aiogram.filters import Command
-from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, ReplyKeyboardMarkup, KeyboardButton
+from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.fsm.storage.memory import MemoryStorage
 
-load_dotenv()
-BOT_TOKEN = os.getenv("BOT_TOKEN")
-ADMIN_ID = int(os.getenv("ADMIN_ID"))
+# ====== НАСТРОЙКИ ======
+BOT_TOKEN = "ВАШ_ТОКЕН_ОТ_BOTFATHER"  # <-- ЗАМЕНИТЕ НА РЕАЛЬНЫЙ ТОКЕН
+ADMIN_ID = 123456789  # <-- ЗАМЕНИТЕ НА ВАШ TELEGRAM ID
 
 bot = Bot(token=BOT_TOKEN)
 storage = MemoryStorage()
@@ -30,17 +28,10 @@ class ProfileSetup(StatesGroup):
     photo = State()
 
 class EditProfile(StatesGroup):
-    field = State()
     value = State()
-
-class ChatState(StatesGroup):
-    active = State()
 
 class ReportState(StatesGroup):
     reason = State()
-
-class VerifyState(StatesGroup):
-    photo = State()
 
 class AdminPremium(StatesGroup):
     user_id = State()
@@ -159,7 +150,6 @@ def init_db():
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     )''')
     
-    # Заполняем подарки
     c.execute("SELECT COUNT(*) FROM gift_types")
     if c.fetchone()[0] == 0:
         gifts = [
@@ -340,15 +330,15 @@ async def cmd_menu(message: types.Message):
 
 @dp.message(Command("profile"))
 async def cmd_profile(message: types.Message):
-    await show_profile_message(message.from_user.id, message)
+    await show_profile(message.from_user.id, message)
 
 @dp.message(Command("browse"))
 async def cmd_browse(message: types.Message):
-    await browse_from_message(message.from_user.id, message)
+    await browse_profiles(message.from_user.id, message)
 
 @dp.message(Command("premium"))
 async def cmd_premium(message: types.Message):
-    await show_premium_message(message.from_user.id, message)
+    await show_premium(message.from_user.id, message)
 
 @dp.message(Command("help"))
 async def cmd_help(message: types.Message):
@@ -458,7 +448,7 @@ async def set_photo(message: types.Message, state: FSMContext):
     )
 
 # ==================== ПРОСМОТР АНКЕТ ====================
-async def browse_from_message(user_id: int, message: types.Message):
+async def browse_profiles(user_id: int, message: types.Message):
     update_activity(user_id)
     reset_daily_limits(user_id)
     
@@ -553,7 +543,7 @@ async def browse_from_message(user_id: int, message: types.Message):
 
 @dp.callback_query(F.data == "browse")
 async def browse_callback(callback: types.CallbackQuery):
-    await browse_from_message(callback.from_user.id, callback.message)
+    await browse_profiles(callback.from_user.id, callback.message)
     await callback.answer()
 
 @dp.callback_query(F.data.startswith("skip_"))
@@ -678,7 +668,7 @@ async def superlike_profile(callback: types.CallbackQuery):
     await browse_callback(callback)
 
 # ==================== ПРОФИЛЬ ====================
-async def show_profile_message(user_id: int, message: types.Message):
+async def show_profile(user_id: int, message: types.Message):
     update_activity(user_id)
     
     conn = get_db()
@@ -716,13 +706,11 @@ async def show_profile_message(user_id: int, message: types.Message):
 
 @dp.callback_query(F.data == "my_profile")
 async def my_profile_callback(callback: types.CallbackQuery):
-    # Удаляем старое сообщение и отправляем новое с фото
     try:
         await callback.message.delete()
     except:
         pass
-    
-    await show_profile_message(callback.from_user.id, callback.message)
+    await show_profile(callback.from_user.id, callback.message)
     await callback.answer()
 
 @dp.callback_query(F.data == "edit_profile")
@@ -744,12 +732,7 @@ async def edit_profile(callback: types.CallbackQuery):
 @dp.callback_query(F.data.startswith("edit_"))
 async def process_edit(callback: types.CallbackQuery, state: FSMContext):
     field = callback.data.split("_")[1]
-    field_names = {
-        "name": "имя",
-        "age": "возраст",
-        "city": "город",
-        "bio": "о себе"
-    }
+    field_names = {"name": "имя", "age": "возраст", "city": "город", "bio": "о себе"}
     
     await state.update_data(edit_field=field)
     await callback.message.edit_text(
@@ -803,7 +786,6 @@ async def update_photo(callback: types.CallbackQuery):
             [InlineKeyboardButton(text="◀️ Отмена", callback_data="my_profile")]
         ])
     )
-    # В реальном боте — FSM для ожидания фото
     await callback.answer()
 
 @dp.callback_query(F.data == "verify_profile")
@@ -834,7 +816,7 @@ async def start_verification(callback: types.CallbackQuery):
     await callback.answer()
 
 # ==================== ПРЕМИУМ ====================
-async def show_premium_message(user_id: int, message: types.Message):
+async def show_premium(user_id: int, message: types.Message):
     is_premium = check_premium(user_id)
     
     if is_premium:
@@ -887,7 +869,7 @@ async def show_premium_message(user_id: int, message: types.Message):
 
 @dp.callback_query(F.data == "premium")
 async def premium_callback(callback: types.CallbackQuery):
-    await show_premium_message(callback.from_user.id, callback.message)
+    await show_premium(callback.from_user.id, callback.message)
     await callback.answer()
 
 @dp.callback_query(F.data == "buy_boost")
@@ -1067,15 +1049,17 @@ async def open_chat(callback: types.CallbackQuery):
     )
     await callback.answer()
 
-# ==================== ОБРАБОТКА СООБЩЕНИЙ В ЧАТЕ ====================
+# ==================== ОБРАБОТКА СООБЩЕНИЙ ====================
 @dp.message(F.text)
 async def handle_message(message: types.Message):
     user_id = message.from_user.id
+    text = message.text
     
-    # Проверяем, есть ли активный чат (упрощённо)
-    # В полной версии нужен менеджер активных чатов через FSM или Redis
+    # Проверяем, не ответ ли это на вопрос бота
+    # В полной версии нужен менеджер активных чатов
     
-    # Если это не команда и не ответ на вопрос бота — игнорируем или отправляем в меню
+    # Если сообщение начинается с / — это команда, обработана выше
+    # Иначе — отправляем в меню
     await message.answer(
         "💕 Используйте меню для навигации:",
         reply_markup=main_menu(user_id)
@@ -1242,7 +1226,7 @@ async def report_reason(callback: types.CallbackQuery, state: FSMContext):
     conn = get_db()
     c = conn.cursor()
     c.execute('''INSERT INTO reports (reporter_id, reported_id, reason, created_at)
-                 VALUES (?, ?, ?, ?)''', (reporter_id, target_id, reason, datetime.now()))
+                   VALUES (?, ?, ?, ?)''', (reporter_id, target_id, reason, datetime.now()))
     conn.commit()
     conn.close()
     
@@ -1397,11 +1381,11 @@ async def admin_reports(callback: types.CallbackQuery):
     conn = get_db()
     c = conn.cursor()
     c.execute('''SELECT r.id, r.reporter_id, r.reported_id, r.reason, r.created_at, u1.username, u2.username
-                 FROM reports r
-                 JOIN users u1 ON r.reporter_id = u1.user_id
-                 JOIN users u2 ON r.reported_id = u2.user_id
-                 WHERE r.status = 'pending'
-                 ORDER BY r.created_at''')
+                   FROM reports r
+                   JOIN users u1 ON r.reporter_id = u1.user_id
+                   JOIN users u2 ON r.reported_id = u2.user_id
+                   WHERE r.status = 'pending'
+                   ORDER BY r.created_at''')
     reports = c.fetchall()
     conn.close()
     
@@ -1594,18 +1578,19 @@ async def daily_tasks():
                   (datetime.now(),))
         
         c.execute('''SELECT DISTINCT l.to_user, COUNT(*) 
-                     FROM likes l 
-                     WHERE l.created_at > datetime('now', '-1 day') 
-                     AND l.is_read = 0
-                     GROUP BY l.to_user''')
+                       FROM likes l 
+                       WHERE l.created_at > datetime('now', '-1 day') 
+                       AND l.is_read = 0
+                       GROUP BY l.to_user''')
         for user_id, count in c.fetchall():
             try:
+                me = await bot.get_me()
                 await bot.send_message(
                     user_id,
                     f"💕 <b>У вас {count} новых лайков!</b>\n\n"
                     f"Откройте бота, чтобы посмотреть кто это.",
                     reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-                        [InlineKeyboardButton(text="🔍 Смотреть", url=f"https://t.me/{(await bot.get_me()).username}")]
+                        [InlineKeyboardButton(text="🔍 Смотреть", url=f"https://t.me/{me.username}")]
                     ]),
                     parse_mode="HTML"
                 )
