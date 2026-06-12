@@ -11,8 +11,8 @@ from aiogram.fsm.state import State, StatesGroup
 from aiogram.fsm.storage.memory import MemoryStorage
 
 # ====== НАСТРОЙКИ ======
-BOT_TOKEN = "ВАШ_ТОКЕН_ОТ_BOTFATHER"  # <-- ЗАМЕНИТЕ НА РЕАЛЬНЫЙ ТОКЕН
-ADMIN_ID = 123456789  # <-- ЗАМЕНИТЕ НА ВАШ TELEGRAM ID
+BOT_TOKEN = "8934692936:AAHO1WgDH6-dyyxnctpRRpmIcfILSG-8mWM"  # <-- ЗАМЕНИТЕ НА РЕАЛЬНЫЙ ТОКЕН
+ADMIN_ID = 5494544187  # <-- ЗАМЕНИТЕ НА ВАШ TELEGRAM ID
 
 bot = Bot(token=BOT_TOKEN)
 storage = MemoryStorage()
