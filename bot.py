@@ -25,6 +25,7 @@ from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.enums import ParseMode
+from aiogram.client.default import DefaultBotProperties
 from aiogram.types import BotCommand
 
 # ==================== CONFIGURATION ====================
@@ -1249,7 +1250,7 @@ async def unknown_message(message: Message):
 async def main():
     init_db()
 
-    bot = Bot(token=BOT_TOKEN, parse_mode=ParseMode.MARKDOWN)
+    bot = Bot(token=BOT_TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.MARKDOWN))
     dp = Dispatcher(storage=MemoryStorage())
     dp.include_router(router)
 
