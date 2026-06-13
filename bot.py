@@ -579,79 +579,49 @@ async def cmd_start(message: types.Message):
 
     is_premium = check_premium(user_id)
 
-    welcome_text = (
-        "<b>💘 Добро пожаловать в LoveSpark!</b>
+    welcome_text = """<b>💘 Добро пожаловать в LoveSpark!</b>
 
-"
-        + "Привет, " + str(first_name) + "! Я — твой помощник в поиске второй половинки.
+Привет, {name}! Я — твой помощник в поиске второй половинки.
 
-"
-        + "✨ <b>Что я умею:</b>
-"
-        + "• Находить людей рядом и по всей России
-"
-        + "• Показывать анкеты с фото и описанием
-"
-        + "• Соединять взаимные симпатии
-"
-        + "• Защищать твою анонимность
+✨ <b>Что я умею:</b>
+• Находить людей рядом и по всей России
+• Показывать анкеты с фото и описанием
+• Соединять взаимные симпатии
+• Защищать твою анонимность
 
-"
-        + "🌍 <b>Работаю во всех городах России</b>, включая ДНР и ЛНР!
+🌍 <b>Работаю во всех городах России</b>, включая ДНР и ЛНР!
 
-"
-        + "💎 <b>Премиум</b> открывает безлимитные лайки, приоритет в поиске и просмотр тех, кто тебя лайкнул!
+💎 <b>Премиум</b> открывает безлимитные лайки, приоритет в поиске и просмотр тех, кто тебя лайкнул!
 
-"
-        + "Нажми <b>💘 Искать пару</b>, чтобы начать!"
-    )
+Нажми <b>💘 Искать пару</b>, чтобы начать!""".format(name=first_name)
 
     await message.answer(welcome_text, reply_markup=main_menu_kb(is_premium))
 
 
 @dp.message(Command("help"))
 async def cmd_help(message: types.Message):
-    help_text = (
-        "<b>📖 Помощь по LoveSpark</b>
+    help_text = """<b>📖 Помощь по LoveSpark</b>
 
-"
-        + "<b>Основные команды:</b>
-"
-        + "/start — Запустить бота
-"
-        + "/search — Начать поиск пары
-"
-        + "/profile — Посмотреть свою анкету
-"
-        + "/likes — Посмотреть лайки
-"
-        + "/premium — Премиум функции
-"
-        + "/settings — Настройки
+<b>Основные команды:</b>
+/start — Запустить бота
+/search — Начать поиск пары
+/profile — Посмотреть свою анкету
+/likes — Посмотреть лайки
+/premium — Премиум функции
+/settings — Настройки
 
-"
-        + "<b>Как пользоваться:</b>
-"
-        + "1️⃣ Создай анкету через 💘 Искать пару
-"
-        + "2️⃣ Просматривай анкеты других
-"
-        + "3️⃣ Ставь ❤️ Лайк тем, кто понравился
-"
-        + "4️⃣ При взаимной симпатии — получи контакт!
+<b>Как пользоваться:</b>
+1️⃣ Создай анкету через 💘 Искать пару
+2️⃣ Просматривай анкеты других
+3️⃣ Ставь ❤️ Лайк тем, кто понравился
+4️⃣ При взаимной симпатии — получи контакт!
 
-"
-        + "<b>Безопасность:</b>
-"
-        + "• Никто не видит твой номер телефона
-"
-        + "• Можешь пожаловаться на нарушителя
-"
-        + "• Удалить анкету в любой момент
+<b>Безопасность:</b>
+• Никто не видит твой номер телефона
+• Можешь пожаловаться на нарушителя
+• Удалить анкету в любой момент
 
-"
-        + "По вопросам: @admin"
-    )
+По вопросам: @admin"""
     await message.answer(help_text)
 
 
@@ -666,13 +636,11 @@ async def search_start(message: types.Message, state: FSMContext):
         return
 
     await message.answer(
-        "<b>✨ Давай создадим твою анкету!</b>
+        """<b>✨ Давай создадим твою анкету!</b>
 
-"
-        + "Ответь на несколько простых вопросов, и я найду для тебя идеальную пару 💕
+Ответь на несколько простых вопросов, и я найду для тебя идеальную пару 💕
 
-"
-        + "<b>Как тебя зовут?</b> (напиши своё имя)",
+<b>Как тебя зовут?</b> (напиши своё имя)""",
         reply_markup=ReplyKeyboardRemove()
     )
     await state.set_state(Registration.name)
@@ -717,10 +685,9 @@ async def reg_gender(message: types.Message, state: FSMContext):
 
     await state.update_data(gender=gender_map[message.text])
     await message.answer(
-        "<b>Из какого ты города?</b>
+        """<b>Из какого ты города?</b>
 
-"
-        + "Напиши название города (например: Москва, Санкт-Петербург, Донецк, Луганск)",
+Напиши название города (например: Москва, Санкт-Петербург, Донецк, Луганск)""",
         reply_markup=ReplyKeyboardRemove()
     )
     await state.set_state(Registration.city)
@@ -750,12 +717,10 @@ async def reg_looking_for(message: types.Message, state: FSMContext):
 
     await state.update_data(looking_for=looking_map[message.text])
     await message.answer(
-        "<b>Расскажи немного о себе</b> 💭
+        """<b>Расскажи немного о себе</b> 💭
 
-"
-        + "Чем увлекаешься? Какой у тебя характер? Что ищешь в отношениях?
-"
-        + "(от 20 до 500 символов)",
+Чем увлекаешься? Какой у тебя характер? Что ищешь в отношениях?
+(от 20 до 500 символов)""",
         reply_markup=ReplyKeyboardRemove()
     )
     await state.set_state(Registration.about)
@@ -770,10 +735,9 @@ async def reg_about(message: types.Message, state: FSMContext):
 
     await state.update_data(about=about)
     await message.answer(
-        "<b>Отправь своё фото</b> 📸
+        """<b>Отправь своё фото</b> 📸
 
-"
-        + "Это главное фото твоей анкеты. Выбери лучшее!"
+Это главное фото твоей анкеты. Выбери лучшее!"""
     )
     await state.set_state(Registration.photo)
 
@@ -788,24 +752,22 @@ async def reg_photo(message: types.Message, state: FSMContext):
     gender_display = {"male": "👨 Мужчина", "female": "👩 Женщина"}
     looking_display = {"male": "👨 Мужчин", "female": "👩 Женщин", "all": "💕 Всех"}
 
-    preview = (
-        "<b>📋 Твоя анкета:</b>
+    preview = """<b>📋 Твоя анкета:</b>
 
-"
-        + "<b>Имя:</b> " + data['name'] + "
-"
-        + "<b>Возраст:</b> " + str(data['age']) + " лет
-"
-        + "<b>Пол:</b> " + gender_display.get(data['gender'], data['gender']) + "
-"
-        + "<b>Город:</b> " + data['city'] + "
-"
-        + "<b>Ищу:</b> " + looking_display.get(data['looking_for'], data['looking_for']) + "
-"
-        + "<b>О себе:</b> " + data['about'] + "
+<b>Имя:</b> {name}
+<b>Возраст:</b> {age} лет
+<b>Пол:</b> {gender}
+<b>Город:</b> {city}
+<b>Ищу:</b> {looking}
+<b>О себе:</b> {about}
 
-"
-        + "<b>Всё верно?</b>"
+<b>Всё верно?</b>""".format(
+        name=data['name'],
+        age=data['age'],
+        gender=gender_display.get(data['gender'], data['gender']),
+        city=data['city'],
+        looking=looking_display.get(data['looking_for'], data['looking_for']),
+        about=data['about']
     )
 
     await message.answer_photo(photo_file_id, caption=preview, reply_markup=confirm_kb())
@@ -837,13 +799,11 @@ async def reg_confirm_yes(message: types.Message, state: FSMContext):
     is_premium = check_premium(user_id)
 
     await message.answer(
-        "<b>🎉 Анкета создана!</b>
+        """<b>🎉 Анкета создана!</b>
 
-"
-        + "Теперь ты можешь искать свою вторую половинку! 💘
+Теперь ты можешь искать свою вторую половинку! 💘
 
-"
-        + "Нажми <b>💘 Искать пару</b>, чтобы начать просмотр анкет.",
+Нажми <b>💘 Искать пару</b>, чтобы начать просмотр анкет.""",
         reply_markup=main_menu_kb(is_premium)
     )
 
@@ -859,10 +819,9 @@ async def start_search(message, user_id):
     profile = get_profile(user_id)
     if not profile:
         await message.answer(
-            "<b>❌ Сначала создай анкету!</b>
+            """<b>❌ Сначала создай анкету!</b>
 
-"
-            + "Нажми 💘 Искать пару"
+Нажми 💘 Искать пару"""
         )
         return
 
@@ -871,12 +830,10 @@ async def start_search(message, user_id):
 
     if not is_premium and user and user[5] >= FREE_PROFILES_PER_DAY:
         await message.answer(
-            "<b>⚠️ Достигнут лимит просмотров на сегодня!</b>
+            """<b>⚠️ Достигнут лимит просмотров на сегодня!</b>
 
-"
-            + "Бесплатно можно просмотреть " + str(FREE_PROFILES_PER_DAY) + " анкет в день.
-"
-            + "💎 Купи Премиум для безлимитного просмотра!",
+Бесплатно можно просмотреть {limit} анкет в день.
+💎 Купи Премиум для безлимитного просмотра!""".format(limit=FREE_PROFILES_PER_DAY),
             reply_markup=premium_kb()
         )
         return
@@ -891,10 +848,9 @@ async def start_search(message, user_id):
 
     if not profiles:
         await message.answer(
-            "<b>😔 Пока нет подходящих анкет</b>
+            """<b>😔 Пока нет подходящих анкет</b>
 
-"
-            + "Попробуй позже или расширь критерии поиска.",
+Попробуй позже или расширь критерии поиска.""",
             reply_markup=main_menu_kb(is_premium)
         )
         return
@@ -910,17 +866,18 @@ async def start_search(message, user_id):
 
     gender_emoji = "👨" if target_gender == "male" else "👩"
 
-    caption = (
-        "<b>" + target_name + "</b>, " + str(target_age) + " " + gender_emoji + "
-"
-        + "📍 " + target_city + "
+    caption = """<b>{name}</b>, {age} {emoji}
+📍 {city}
 
-"
-        + "<b>О себе:</b>
-" + target_about + "
+<b>О себе:</b>
+{about}
 
-"
-        + "❤️ Лайкни, если понравился(ась)!"
+❤️ Лайкни, если понравился(ась)!""".format(
+        name=target_name,
+        age=target_age,
+        emoji=gender_emoji,
+        city=target_city,
+        about=target_about
     )
 
     await message.answer_photo(
@@ -955,23 +912,25 @@ async def process_like(callback: types.CallbackQuery):
         if target_profile and my_profile:
             await bot.send_message(
                 target_id,
-                "<b>💘 У вас взаимная симпатия!</b>
+                """<b>💘 У вас взаимная симпатия!</b>
 
-"
-                + "<b>" + my_profile[1] + "</b> тоже лайкнул(а) тебя!
+<b>{name}</b> тоже лайкнул(а) тебя!
 
-"
-                + "Начните общаться: @" + str(callback.from_user.username or "пользователь")
+Начните общаться: @{username}""".format(
+                    name=my_profile[1],
+                    username=callback.from_user.username or "пользователь"
+                )
             )
 
             await callback.message.answer(
-                "<b>🎉 Взаимная симпатия!</b>
+                """<b>🎉 Взаимная симпатия!</b>
 
-"
-                + "<b>" + target_profile[1] + "</b> тоже лайкнул(а) тебя!
+<b>{name}</b> тоже лайкнул(а) тебя!
 
-"
-                + "Контакт: @" + str(target_id)
+Контакт: @{user_id}""".format(
+                    name=target_profile[1],
+                    user_id=target_id
+                )
             )
     else:
         await callback.answer("❤️ Лайк отправлен!")
@@ -992,10 +951,9 @@ async def process_report(callback: types.CallbackQuery, state: FSMContext):
     target_id = int(callback.data.split("_")[1])
     await state.update_data(report_target=target_id)
     await callback.message.answer(
-        "<b>🚫 Жалоба на пользователя</b>
+        """<b>🚫 Жалоба на пользователя</b>
 
-"
-        + "Опиши причину жалобы (спам, оскорбления, фейк и т.д.):"
+Опиши причину жалобы (спам, оскорбления, фейк и т.д.):"""
     )
     await state.set_state(ReportState.reason)
 
@@ -1010,21 +968,21 @@ async def report_reason(message: types.Message, state: FSMContext):
 
     await bot.send_message(
         ADMIN_ID,
-        "<b>🚨 Новая жалоба!</b>
+        """<b>🚨 Новая жалоба!</b>
 
-"
-        + "От: " + str(message.from_user.id) + "
-"
-        + "На: " + str(target_id) + "
-"
-        + "Причина: " + reason
+От: {from_user}
+На: {to_user}
+Причина: {reason}""".format(
+            from_user=message.from_user.id,
+            to_user=target_id,
+            reason=reason
+        )
     )
 
     await message.answer(
-        "<b>✅ Жалоба отправлена!</b>
+        """<b>✅ Жалоба отправлена!</b>
 
-"
-        + "Мы рассмотрим её в ближайшее время.",
+Мы рассмотрим её в ближайшее время.""",
         reply_markup=main_menu_kb(check_premium(message.from_user.id))
     )
     await state.clear()
@@ -1038,10 +996,9 @@ async def my_profile(message: types.Message):
 
     if not profile:
         await message.answer(
-            "<b>❌ У тебя ещё нет анкеты!</b>
+            """<b>❌ У тебя ещё нет анкеты!</b>
 
-"
-            + "Нажми 💘 Искать пару, чтобы создать её."
+Нажми 💘 Искать пару, чтобы создать её."""
         )
         return
 
@@ -1051,21 +1008,21 @@ async def my_profile(message: types.Message):
     is_premium = check_premium(user_id)
     premium_badge = " ⭐ ПРЕМИУМ" if is_premium else ""
 
-    caption = (
-        "<b>📋 Твоя анкета" + premium_badge + "</b>
+    caption = """<b>📋 Твоя анкета{badge}</b>
 
-"
-        + "<b>Имя:</b> " + profile[1] + "
-"
-        + "<b>Возраст:</b> " + str(profile[2]) + " лет
-"
-        + "<b>Пол:</b> " + gender_display.get(profile[3], profile[3]) + "
-"
-        + "<b>Город:</b> " + profile[4] + "
-"
-        + "<b>Ищу:</b> " + looking_display.get(profile[5], profile[5]) + "
-"
-        + "<b>О себе:</b> " + profile[6]
+<b>Имя:</b> {name}
+<b>Возраст:</b> {age} лет
+<b>Пол:</b> {gender}
+<b>Город:</b> {city}
+<b>Ищу:</b> {looking}
+<b>О себе:</b> {about}""".format(
+        badge=premium_badge,
+        name=profile[1],
+        age=profile[2],
+        gender=gender_display.get(profile[3], profile[3]),
+        city=profile[4],
+        looking=looking_display.get(profile[5], profile[5]),
+        about=profile[6]
     )
 
     await message.answer_photo(profile[7], caption=caption)
@@ -1080,41 +1037,26 @@ async def my_likes(message: types.Message):
     mutual = get_mutual_likes(user_id)
     who_liked = get_who_liked_me(user_id)
 
-    text = "<b>❤️ Твои лайки</b>
-
-"
+    text = "<b>❤️ Твои лайки</b>\n\n"
 
     if mutual:
-        text += "<b>💘 Взаимные симпатии (" + str(len(mutual)) + "):</b>
-"
+        text += "<b>💘 Взаимные симпатии (" + str(len(mutual)) + "):</b>\n"
         for like in mutual:
-            text += "• " + like[1] + "
-"
-        text += "
-"
+            text += "• " + like[1] + "\n"
+        text += "\n"
     else:
-        text += "<b>💘 Взаимных симпатий пока нет</b>
-
-"
+        text += "<b>💘 Взаимных симпатий пока нет</b>\n\n"
 
     if who_liked:
         if is_premium:
-            text += "<b>👀 Тебя лайкнули (" + str(len(who_liked)) + "):</b>
-"
+            text += "<b>👀 Тебя лайкнули (" + str(len(who_liked)) + "):</b>\n"
             for like in who_liked:
-                text += "• " + like[1] + "
-"
+                text += "• " + like[1] + "\n"
         else:
-            text += (
-                "<b>👀 Тебя лайкнули: " + str(len(who_liked)) + " человек</b>
-"
-                + "💎 Купи Премиум, чтобы увидеть кто именно!
-
-"
-            )
+            text += "<b>👀 Тебя лайкнули: " + str(len(who_liked)) + " человек</b>\n"
+            text += "💎 Купи Премиум, чтобы увидеть кто именно!\n\n"
     else:
-        text += "<b>👀 Тебя пока никто не лайкнул</b>
-"
+        text += "<b>👀 Тебя пока никто не лайкнул</b>\n"
 
     await message.answer(text)
 
@@ -1122,27 +1064,17 @@ async def my_likes(message: types.Message):
 # ==================== ПРЕМИУМ ====================
 @dp.message(F.text == "💎 Премиум")
 async def premium_menu(message: types.Message):
-    text = (
-        "<b>💎 Премиум подписка LoveSpark</b>
+    text = """<b>💎 Премиум подписка LoveSpark</b>
 
-"
-        + "<b>Что даёт Премиум:</b>
-"
-        + "✅ Безлимитные лайки
-"
-        + "✅ Безлимитный просмотр анкет
-"
-        + "✅ Приоритет в поиске
-"
-        + "✅ Просмотр кто тебя лайкнул
-"
-        + "✅ Значок ⭐ в анкете
-"
-        + "✅ Расширенные фильтры поиска
+<b>Что даёт Премиум:</b>
+✅ Безлимитные лайки
+✅ Безлимитный просмотр анкет
+✅ Приоритет в поиске
+✅ Просмотр кто тебя лайкнул
+✅ Значок ⭐ в анкете
+✅ Расширенные фильтры поиска
 
-"
-        + "<b>Выбери тариф:</b>"
-    )
+<b>Выбери тариф:</b>"""
     await message.answer(text, reply_markup=premium_kb())
 
 
@@ -1162,16 +1094,14 @@ async def process_premium(callback: types.CallbackQuery):
         await callback.answer("❌ Ошибка создания платежа")
         return
 
-    text = (
-        "<b>💎 Оплата Премиума</b>
+    text = """<b>💎 Оплата Премиума</b>
 
-"
-        + "Тариф: <b>" + tariff['label'] + "</b>
-"
-        + "Стоимость: <b>" + str(tariff['price']) + "₽</b>
+Тариф: <b>{label}</b>
+Стоимость: <b>{price}₽</b>
 
-"
-        + "<b>После оплаты нажми "Проверить оплату"</b>"
+<b>После оплаты нажми "Проверить оплату"</b>""".format(
+        label=tariff['label'],
+        price=tariff['price']
     )
 
     kb = InlineKeyboardMarkup(inline_keyboard=[
@@ -1190,13 +1120,11 @@ async def check_payment_callback(callback: types.CallbackQuery):
     if process_payment(label):
         await callback.answer("✅ Оплата прошла успешно! Премиум активирован!")
         await callback.message.edit_text(
-            "<b>🎉 Премиум активирован!</b>
+            """<b>🎉 Премиум активирован!</b>
 
-"
-            + "Теперь у тебя безлимитные лайки, приоритет в поиске и многое другое!
+Теперь у тебя безлимитные лайки, приоритет в поиске и многое другое!
 
-"
-            + "Нажми 💘 Искать пару, чтобы начать!",
+Нажми 💘 Искать пару, чтобы начать!""",
             reply_markup=InlineKeyboardMarkup(inline_keyboard=[
                 [InlineKeyboardButton(text="💘 Искать пару", callback_data="back_main")]
             ])
@@ -1214,10 +1142,9 @@ async def settings_menu(message: types.Message):
 @dp.callback_query(F.data == "edit_profile")
 async def edit_profile(callback: types.CallbackQuery, state: FSMContext):
     await callback.message.edit_text(
-        "<b>✏️ Редактирование анкеты</b>
+        """<b>✏️ Редактирование анкеты</b>
 
-"
-        + "Анкета будет создана заново. Нажми 💘 Искать пару."
+Анкета будет создана заново. Нажми 💘 Искать пару."""
     )
     await state.clear()
 
@@ -1229,10 +1156,9 @@ async def delete_profile_cmd(callback: types.CallbackQuery):
         [InlineKeyboardButton(text="❌ Нет, оставить", callback_data="back_main")],
     ])
     await callback.message.edit_text(
-        "<b>🗑 Удалить анкету?</b>
+        """<b>🗑 Удалить анкету?</b>
 
-"
-        + "Все данные будут удалены безвозвратно.",
+Все данные будут удалены безвозвратно.""",
         reply_markup=kb
     )
 
@@ -1242,10 +1168,9 @@ async def confirm_delete(callback: types.CallbackQuery):
     user_id = callback.from_user.id
     delete_profile(user_id)
     await callback.message.edit_text(
-        "<b>✅ Анкета удалена!</b>
+        """<b>✅ Анкета удалена!</b>
 
-"
-        + "Ты можешь создать новую в любой момент через 💘 Искать пару."
+Ты можешь создать новую в любой момент через 💘 Искать пару."""
     )
 
 
@@ -1256,22 +1181,20 @@ async def stats_menu(message: types.Message):
 
     if user_id == ADMIN_ID:
         stats = get_stats()
-        text = (
-            "<b>📊 Статистика бота (Admin)</b>
+        text = """<b>📊 Статистика бота (Admin)</b>
 
-"
-            + "👥 Всего пользователей: <b>" + str(stats['total_users']) + "</b>
-"
-            + "✅ Активных анкет: <b>" + str(stats['active_profiles']) + "</b>
-"
-            + "⭐ Премиум пользователей: <b>" + str(stats['premium_users']) + "</b>
-"
-            + "❤️ Всего лайков: <b>" + str(stats['total_likes']) + "</b>
-"
-            + "💰 Общая выручка: <b>" + str(stats['total_revenue']) + "₽</b>
+👥 Всего пользователей: <b>{users}</b>
+✅ Активных анкет: <b>{profiles}</b>
+⭐ Премиум пользователей: <b>{premium}</b>
+❤️ Всего лайков: <b>{likes}</b>
+💰 Общая выручка: <b>{revenue}₽</b>
 
-"
-            + "Выбери действие:"
+Выбери действие:""".format(
+            users=stats['total_users'],
+            profiles=stats['active_profiles'],
+            premium=stats['premium_users'],
+            likes=stats['total_likes'],
+            revenue=stats['total_revenue']
         )
         await message.answer(text, reply_markup=admin_kb())
     else:
@@ -1283,16 +1206,14 @@ async def stats_menu(message: types.Message):
         mutual = get_mutual_likes(user_id)
         who_liked = get_who_liked_me(user_id)
 
-        text = (
-            "<b>📊 Твоя статистика</b>
+        text = """<b>📊 Твоя статистика</b>
 
-"
-            + "💘 Взаимных симпатий: <b>" + str(len(mutual)) + "</b>
-"
-            + "👀 Лайков получено: <b>" + str(len(who_liked)) + "</b>
+💘 Взаимных симпатий: <b>{mutual}</b>
+👀 Лайков получено: <b>{liked}</b>
 
-"
-            + "Продолжай искать свою любовь! 💕"
+Продолжай искать свою любовь! 💕""".format(
+            mutual=len(mutual),
+            liked=len(who_liked)
         )
         await message.answer(text)
 
@@ -1301,19 +1222,18 @@ async def stats_menu(message: types.Message):
 @dp.callback_query(F.data == "admin_stats")
 async def admin_stats(callback: types.CallbackQuery):
     stats = get_stats()
-    text = (
-        "<b>📊 Детальная статистика</b>
+    text = """<b>📊 Детальная статистика</b>
 
-"
-        + "👥 Пользователей: " + str(stats['total_users']) + "
-"
-        + "✅ Анкет: " + str(stats['active_profiles']) + "
-"
-        + "⭐ Премиум: " + str(stats['premium_users']) + "
-"
-        + "❤️ Лайков: " + str(stats['total_likes']) + "
-"
-        + "💰 Выручка: " + str(stats['total_revenue']) + "₽"
+👥 Пользователей: {users}
+✅ Анкет: {profiles}
+⭐ Премиум: {premium}
+❤️ Лайков: {likes}
+💰 Выручка: {revenue}₽""".format(
+        users=stats['total_users'],
+        profiles=stats['active_profiles'],
+        premium=stats['premium_users'],
+        likes=stats['total_likes'],
+        revenue=stats['total_revenue']
     )
     await callback.message.edit_text(text, reply_markup=admin_kb())
 
@@ -1331,10 +1251,9 @@ async def admin_balance_cmd(callback: types.CallbackQuery):
 @dp.callback_query(F.data == "admin_broadcast")
 async def admin_broadcast(callback: types.CallbackQuery):
     await callback.message.edit_text(
-        "<b>📢 Рассылка</b>
+        """<b>📢 Рассылка</b>
 
-"
-        + "Отправь сообщение для рассылки всем пользователям:"
+Отправь сообщение для рассылки всем пользователям:"""
     )
 
 
@@ -1360,10 +1279,9 @@ async def handle_text(message: types.Message):
     if message.text not in ["💘 Искать пару", "👤 Моя анкета", "❤️ Мои лайки", 
                             "❤️ Мои лайки ⭐", "💎 Премиум", "⚙️ Настройки", "📊 Статистика"]:
         await message.answer(
-            "<b>🤔 Я не понял команду</b>
+            """<b>🤔 Я не понял команду</b>
 
-"
-            + "Используй кнопки меню или /help для справки."
+Используй кнопки меню или /help для справки."""
         )
 
 
