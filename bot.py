@@ -1,1446 +1,1306 @@
-#!/usr/bin/env python3
-# -*- coding: utf-8 -*-
-"""
-LoveSpark - Bot for dating across Russia, DNR and LNR
-Version: 3.1.0 - YooMoney Integration
-Stack: aiogram 3.7+ + sqlite3 + yoomoney
-"""
 
-import asyncio
 import logging
-import sqlite3
-import secrets
-import string
-import uuid
+import json
+import random
+import asyncio
+import aiohttp
 from datetime import datetime, timedelta
-from typing import Optional, List
-from contextlib import closing
+from typing import Dict, List, Optional
 
-from aiogram import Bot, Dispatcher, F, Router
+from aiogram import Bot, Dispatcher, F, types
 from aiogram.types import (
-    Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton,
-    ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove
+    InlineKeyboardMarkup, InlineKeyboardButton,
+    ReplyKeyboardMarkup, KeyboardButton,
+    ReplyKeyboardRemove, BotCommand,
+    InputMediaPhoto, CallbackQuery, Message,
+    MenuButtonCommands
 )
-from aiogram.filters import Command
+from aiogram.filters import Command, CommandStart
+from aiogram.enums import ParseMode
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.fsm.storage.memory import MemoryStorage
-from aiogram.enums import ParseMode
-from aiogram.types import BotCommand
 from aiogram.client.default import DefaultBotProperties
 
-# ==================== YOOMONEY CONFIGURATION ====================
+# ========== КОНФИГУРАЦИЯ ==========
+BOT_TOKEN = "8934692936:AAHO1WgDH6-dyyxnctpRRpmIcfILSG-8mWM"
+ADMIN_ID = 5494544187
 YOOMONEY_TOKEN = "5133D1719448E2A5E1083A0FC605E369944CBB992B1D4490F13E2D4636C03191"
 YOOMONEY_WALLET = "4100118935779591"
 
-# ==================== BOT CONFIGURATION ====================
-BOT_TOKEN = "8934692936:AAHO1WgDH6-dyyxnctpRRpmIcfILSG-8mWM"
-ADMIN_ID = 5494544187
-
-DAILY_FREE_LIKES = 10
-
+# Настройки премиума
 PREMIUM_PRICES = {
-    "week": {"label": "Premium 1 неделя", "price": 199, "days": 7},
-    "month": {"label": "Premium 1 месяц", "price": 499, "days": 30},
-    "quarter": {"label": "Premium 3 месяца", "price": 1199, "days": 90},
-    "year": {"label": "Premium 1 год", "price": 2999, "days": 365},
+    "week": {"price": 199, "days": 7, "name": "Неделя", "emoji": "📅"},
+    "month": {"price": 499, "days": 30, "name": "Месяц", "emoji": "🌙"},
+    "quarter": {"price": 1299, "days": 90, "name": "3 месяца", "emoji": "⭐"},
+    "half_year": {"price": 1999, "days": 180, "name": "6 месяцев", "emoji": "💎"},
+    "year": {"price": 3499, "days": 365, "name": "Год", "emoji": "👑"},
 }
 
-# ==================== LOGGING ====================
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
-)
+# Лимиты
+FREE_LIMITS = {
+    "daily_likes": 10,
+    "daily_messages": 5,
+    "profile_photos": 3,
+    "search_radius": 50,
+    "can_see_likes": False,
+    "can_use_filters": False,
+    "can_boost": False,
+}
+
+PREMIUM_LIMITS = {
+    "daily_likes": 999999,
+    "daily_messages": 999999,
+    "profile_photos": 10,
+    "search_radius": 500,
+    "can_see_likes": True,
+    "can_use_filters": True,
+    "can_boost": True,
+}
+
+# Города России + ДНР/ЛНР
+CITIES = [
+    "Москва", "Санкт-Петербург", "Новосибирск", "Екатеринбург", "Казань",
+    "Нижний Новгород", "Красноярск", "Челябинск", "Самара", "Уфа",
+    "Ростов-на-Дону", "Омск", "Краснодар", "Воронеж", "Волгоград",
+    "Пермь", "Тюмень", "Тольятти", "Ижевск", "Барнаул",
+    "Ульяновск", "Иркутск", "Хабаровск", "Ярославль", "Владивосток",
+    "Махачкала", "Томск", "Оренбург", "Кемерово", "Новокузнецк",
+    "Рязань", "Набережные Челны", "Астрахань", "Пенза", "Киров",
+    "Липецк", "Балашиха", "Чебоксары", "Калининград", "Тула",
+    "Курск", "Ставрополь", "Сочи", "Севастополь", "Симферополь",
+    "Донецк (ДНР)", "Макеевка (ДНР)", "Горловка (ДНР)", "Мариуполь (ДНР)",
+    "Луганск (ЛНР)", "Алчевск (ЛНР)", "Северодонецк (ЛНР)", "Лисичанск (ЛНР)",
+]
+
+# ========== ЛОГИРОВАНИЕ ==========
+logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# ==================== DATABASE ====================
-DB_NAME = "lovespark.db"
-
-
-def init_db():
-    with closing(sqlite3.connect(DB_NAME)) as conn:
-        cursor = conn.cursor()
-
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS users (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                telegram_id INTEGER UNIQUE NOT NULL,
-                username TEXT,
-                first_name TEXT,
-                is_premium INTEGER DEFAULT 0,
-                premium_until TEXT,
-                daily_likes INTEGER DEFAULT 10,
-                last_like_reset TEXT,
-                superlikes INTEGER DEFAULT 0,
-                undos INTEGER DEFAULT 0,
-                is_banned INTEGER DEFAULT 0,
-                created_at TEXT DEFAULT CURRENT_TIMESTAMP,
-                referral_code TEXT UNIQUE,
-                referred_by INTEGER
-            )
-        """)
-
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS profiles (
-                user_id INTEGER PRIMARY KEY,
-                name TEXT NOT NULL,
-                age INTEGER NOT NULL,
-                gender TEXT NOT NULL,
-                city TEXT NOT NULL,
-                bio TEXT,
-                photo_id TEXT,
-                additional_photos TEXT,
-                looking_for TEXT NOT NULL,
-                interests TEXT,
-                goal TEXT DEFAULT 'all',
-                height INTEGER,
-                is_active INTEGER DEFAULT 1,
-                last_active TEXT DEFAULT CURRENT_TIMESTAMP,
-                FOREIGN KEY (user_id) REFERENCES users(telegram_id)
-            )
-        """)
-
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS likes (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                from_user_id INTEGER NOT NULL,
-                to_user_id INTEGER NOT NULL,
-                is_superlike INTEGER DEFAULT 0,
-                created_at TEXT DEFAULT CURRENT_TIMESTAMP,
-                UNIQUE(from_user_id, to_user_id)
-            )
-        """)
-
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS matches (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                user1_id INTEGER NOT NULL,
-                user2_id INTEGER NOT NULL,
-                created_at TEXT DEFAULT CURRENT_TIMESTAMP,
-                UNIQUE(user1_id, user2_id)
-            )
-        """)
-
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS payments (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                user_id INTEGER NOT NULL,
-                amount INTEGER NOT NULL,
-                plan TEXT NOT NULL,
-                label TEXT UNIQUE NOT NULL,
-                status TEXT DEFAULT 'pending',
-                created_at TEXT DEFAULT CURRENT_TIMESTAMP
-            )
-        """)
-
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS viewed_profiles (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                viewer_id INTEGER NOT NULL,
-                viewed_id INTEGER NOT NULL,
-                action TEXT NOT NULL,
-                created_at TEXT DEFAULT CURRENT_TIMESTAMP,
-                UNIQUE(viewer_id, viewed_id)
-            )
-        """)
-
-        conn.commit()
-        logger.info("Database initialized")
-
-
-def get_db():
-    return sqlite3.connect(DB_NAME)
-
-
-def generate_ref_code():
-    return ''.join(secrets.choice(string.ascii_uppercase + string.digits) for _ in range(8))
-
-
-def generate_payment_label(user_id: int, plan: str) -> str:
-    return f"LS_{user_id}_{plan}_{uuid.uuid4().hex[:8]}"
-
-
-# ==================== DATABASE UTILITIES ====================
-def get_or_create_user(telegram_id: int, username: str = None, first_name: str = None) -> dict:
-    with closing(get_db()) as conn:
-        conn.row_factory = sqlite3.Row
-        cursor = conn.cursor()
-        cursor.execute("SELECT * FROM users WHERE telegram_id = ?", (telegram_id,))
-        user = cursor.fetchone()
-
-        if not user:
-            ref_code = generate_ref_code()
-            cursor.execute(
-                "INSERT INTO users (telegram_id, username, first_name, referral_code, last_like_reset) VALUES (?, ?, ?, ?, ?)",
-                (telegram_id, username, first_name, ref_code, datetime.now().isoformat())
-            )
-            conn.commit()
-            cursor.execute("SELECT * FROM users WHERE telegram_id = ?", (telegram_id,))
-            user = cursor.fetchone()
-
-        return dict(user)
-
-
-def get_user(telegram_id: int) -> Optional[dict]:
-    with closing(get_db()) as conn:
-        conn.row_factory = sqlite3.Row
-        cursor = conn.cursor()
-        cursor.execute("SELECT * FROM users WHERE telegram_id = ?", (telegram_id,))
-        row = cursor.fetchone()
-        return dict(row) if row else None
-
-
-def get_profile(user_id: int) -> Optional[dict]:
-    with closing(get_db()) as conn:
-        conn.row_factory = sqlite3.Row
-        cursor = conn.cursor()
-        cursor.execute("SELECT * FROM profiles WHERE user_id = ?", (user_id,))
-        row = cursor.fetchone()
-        return dict(row) if row else None
-
-
-def save_profile(user_id: int, data: dict):
-    with closing(get_db()) as conn:
-        cursor = conn.cursor()
-        cursor.execute("""
-            INSERT OR REPLACE INTO profiles 
-            (user_id, name, age, gender, city, bio, photo_id, looking_for, is_active, last_active)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, ?)
-        """, (
-            user_id, data.get("name"), data.get("age"), data.get("gender"),
-            data.get("city"), data.get("bio"), data.get("photo_id"),
-            data.get("looking_for"), datetime.now().isoformat()
-        ))
-        conn.commit()
-
-
-def is_premium(user_id: int) -> bool:
-    user = get_user(user_id)
-    if not user or not user["is_premium"]:
-        return False
-    if user["premium_until"]:
-        until = datetime.fromisoformat(user["premium_until"])
-        if until > datetime.now():
-            return True
-    return False
-
-
-def reset_daily_likes_if_needed(user_id: int):
-    user = get_user(user_id)
-    if not user:
-        return
-    last_reset = datetime.fromisoformat(user["last_like_reset"]) if user["last_like_reset"] else datetime.min
-    if last_reset.date() < datetime.now().date():
-        with closing(get_db()) as conn:
-            cursor = conn.cursor()
-            likes = 999 if is_premium(user_id) else DAILY_FREE_LIKES
-            cursor.execute(
-                "UPDATE users SET daily_likes = ?, last_like_reset = ? WHERE telegram_id = ?",
-                (likes, datetime.now().isoformat(), user_id)
-            )
-            conn.commit()
-
-
-def decrement_likes(user_id: int) -> bool:
-    reset_daily_likes_if_needed(user_id)
-    if is_premium(user_id):
-        return True
-    with closing(get_db()) as conn:
-        cursor = conn.cursor()
-        cursor.execute("SELECT daily_likes FROM users WHERE telegram_id = ?", (user_id,))
-        row = cursor.fetchone()
-        if row and row[0] > 0:
-            cursor.execute("UPDATE users SET daily_likes = daily_likes - 1 WHERE telegram_id = ?", (user_id,))
-            conn.commit()
-            return True
-        return False
-
-
-def get_remaining_likes(user_id: int) -> int:
-    reset_daily_likes_if_needed(user_id)
-    if is_premium(user_id):
-        return 999
-    with closing(get_db()) as conn:
-        cursor = conn.cursor()
-        cursor.execute("SELECT daily_likes FROM users WHERE telegram_id = ?", (user_id,))
-        row = cursor.fetchone()
-        return row[0] if row else 0
-
-
-def add_like(from_id: int, to_id: int, superlike: bool = False) -> bool:
-    with closing(get_db()) as conn:
-        cursor = conn.cursor()
-        try:
-            cursor.execute(
-                "INSERT INTO likes (from_user_id, to_user_id, is_superlike) VALUES (?, ?, ?)",
-                (from_id, to_id, 1 if superlike else 0)
-            )
-            conn.commit()
-        except sqlite3.IntegrityError:
-            pass
-
-        cursor.execute(
-            "SELECT 1 FROM likes WHERE from_user_id = ? AND to_user_id = ?",
-            (to_id, from_id)
-        )
-        mutual = cursor.fetchone()
-
-        if mutual:
-            try:
-                cursor.execute(
-                    "INSERT INTO matches (user1_id, user2_id) VALUES (?, ?)",
-                    (min(from_id, to_id), max(from_id, to_id))
-                )
-                conn.commit()
-                return True
-            except sqlite3.IntegrityError:
-                return False
-        return False
-
-
-def mark_viewed(viewer_id: int, viewed_id: int, action: str):
-    with closing(get_db()) as conn:
-        cursor = conn.cursor()
-        try:
-            cursor.execute(
-                "INSERT INTO viewed_profiles (viewer_id, viewed_id, action) VALUES (?, ?, ?)",
-                (viewer_id, viewed_id, action)
-            )
-            conn.commit()
-        except sqlite3.IntegrityError:
-            pass
-
-
-def get_next_profile(viewer_id: int) -> Optional[dict]:
-    my_profile = get_profile(viewer_id)
-    if not my_profile:
-        return None
-
-    looking_for = my_profile["looking_for"]
-    my_gender = my_profile["gender"]
-
-    with closing(get_db()) as conn:
-        conn.row_factory = sqlite3.Row
-        cursor = conn.cursor()
-
-        cursor.execute("SELECT viewed_id FROM viewed_profiles WHERE viewer_id = ?", (viewer_id,))
-        viewed = [row[0] for row in cursor.fetchall()]
-
-        if viewed:
-            placeholders = ",".join(["?"] * len(viewed))
-            query = f"""
-                SELECT p.*, u.is_premium FROM profiles p
-                JOIN users u ON p.user_id = u.telegram_id
-                WHERE p.user_id != ? 
-                AND p.is_active = 1 
-                AND u.is_banned = 0
-                AND p.user_id NOT IN ({placeholders})
-            """
-            params = [viewer_id] + viewed
-        else:
-            query = """
-                SELECT p.*, u.is_premium FROM profiles p
-                JOIN users u ON p.user_id = u.telegram_id
-                WHERE p.user_id != ? 
-                AND p.is_active = 1 
-                AND u.is_banned = 0
-            """
-            params = [viewer_id]
-
-        if looking_for != "all":
-            query += " AND p.gender = ?"
-            params.append(looking_for)
-
-        query += " AND (p.looking_for = ? OR p.looking_for = 'all')"
-        params.append(my_gender)
-
-        query += " ORDER BY u.is_premium DESC, p.last_active DESC LIMIT 1"
-
-        cursor.execute(query, params)
-        row = cursor.fetchone()
-        return dict(row) if row else None
-
-
-def get_likes_to_user(user_id: int) -> List[dict]:
-    with closing(get_db()) as conn:
-        conn.row_factory = sqlite3.Row
-        cursor = conn.cursor()
-        cursor.execute("""
-            SELECT l.*, p.name, p.age, p.city, p.photo_id, p.gender 
-            FROM likes l
-            JOIN profiles p ON l.from_user_id = p.user_id
-            WHERE l.to_user_id = ?
-            AND NOT EXISTS (
-                SELECT 1 FROM matches 
-                WHERE (user1_id = l.from_user_id AND user2_id = l.to_user_id)
-                OR (user1_id = l.to_user_id AND user2_id = l.from_user_id)
-            )
-            ORDER BY l.created_at DESC
-        """, (user_id,))
-        return [dict(row) for row in cursor.fetchall()]
-
-
-def get_matches(user_id: int) -> List[dict]:
-    with closing(get_db()) as conn:
-        conn.row_factory = sqlite3.Row
-        cursor = conn.cursor()
-        cursor.execute("""
-            SELECT m.*, p.name, p.age, p.city, p.photo_id, p.gender, p.bio,
-                   CASE WHEN m.user1_id = ? THEN m.user2_id ELSE m.user1_id END as partner_id
-            FROM matches m
-            JOIN profiles p ON (CASE WHEN m.user1_id = ? THEN m.user2_id ELSE m.user1_id END) = p.user_id
-            WHERE m.user1_id = ? OR m.user2_id = ?
-            ORDER BY m.created_at DESC
-        """, (user_id, user_id, user_id, user_id))
-        return [dict(row) for row in cursor.fetchall()]
-
-
-def activate_premium(user_id: int, plan: str):
-    info = PREMIUM_PRICES[plan]
-    until = datetime.now() + timedelta(days=info["days"])
-    with closing(get_db()) as conn:
-        cursor = conn.cursor()
-        cursor.execute(
-            "UPDATE users SET is_premium = 1, premium_until = ?, daily_likes = 999 WHERE telegram_id = ?",
-            (until.isoformat(), user_id)
-        )
-        conn.commit()
-
-
-def save_payment(user_id: int, amount: int, plan: str, label: str):
-    with closing(get_db()) as conn:
-        cursor = conn.cursor()
-        cursor.execute(
-            "INSERT OR REPLACE INTO payments (user_id, amount, plan, label, status) VALUES (?, ?, ?, ?, 'pending')",
-            (user_id, amount, plan, label)
-        )
-        conn.commit()
-
-
-def update_payment_status(label: str, status: str):
-    with closing(get_db()) as conn:
-        cursor = conn.cursor()
-        cursor.execute("UPDATE payments SET status = ? WHERE label = ?", (status, label))
-        conn.commit()
-
-
-def get_payment_by_label(label: str) -> Optional[dict]:
-    with closing(get_db()) as conn:
-        conn.row_factory = sqlite3.Row
-        cursor = conn.cursor()
-        cursor.execute("SELECT * FROM payments WHERE label = ?", (label,))
-        row = cursor.fetchone()
-        return dict(row) if row else None
-
-
-def update_profile_activity(user_id: int):
-    with closing(get_db()) as conn:
-        cursor = conn.cursor()
-        cursor.execute(
-            "UPDATE profiles SET last_active = ? WHERE user_id = ?",
-            (datetime.now().isoformat(), user_id)
-        )
-        conn.commit()
-
-
-# ==================== YOOMONEY INTEGRATION ====================
-def create_yoomoney_payment_link(user_id: int, plan: str) -> tuple:
-    """Generate YooMoney Quickpay link and return (url, label)"""
-    info = PREMIUM_PRICES[plan]
-    label = generate_payment_label(user_id, plan)
-
-    # YooMoney Quickpay URL parameters
-    base_url = "https://yoomoney.ru/quickpay/confirm.xml"
-    params = {
-        "receiver": YOOMONEY_WALLET,
-        "quickpay-form": "shop",
-        "targets": f"LoveSpark Premium - {info['label']}",
-        "paymentType": "SB",
-        "sum": info["price"],
-        "label": label,
-        "successURL": "https://t.me/lovespark_bot"  # Replace with your bot link
-    }
-
-    import urllib.parse
-    query = urllib.parse.urlencode(params)
-    url = f"{base_url}?{query}"
-
-    # Save payment to database
-    save_payment(user_id, info["price"], plan, label)
-
-    return url, label
-
-
-def check_yoomoney_payment(label: str) -> bool:
-    """Check if payment was completed via YooMoney API"""
-    try:
-        import requests
-        url = "https://yoomoney.ru/api/operation-history"
-        headers = {
-            "Authorization": f"Bearer {YOOMONEY_TOKEN}",
-            "Content-Type": "application/x-www-form-urlencoded"
-        }
-        data = {
-            "type": "deposition",
-            "label": label,
-            "details": "true"
-        }
-
-        response = requests.post(url, headers=headers, data=data, timeout=10)
-        if response.status_code == 200:
-            result = response.json()
-            operations = result.get("operations", [])
-            for op in operations:
-                if op.get("status") == "success":
-                    return True
-        return False
-    except Exception as e:
-        logger.error(f"Error checking YooMoney payment: {e}")
-        return False
-
-
-# ==================== KEYBOARDS ====================
-def main_menu_kb(is_premium: bool = False):
-    buttons = [
-        [KeyboardButton(text="🔍 Смотреть анкеты")],
-        [KeyboardButton(text="❤️ Кто лайкнул"), KeyboardButton(text="💌 Мои мэтчи")],
-        [KeyboardButton(text="👤 Моя анкета"), KeyboardButton(text="⚙️ Настройки")],
-    ]
-    if not is_premium:
-        buttons.append([KeyboardButton(text="💎 Премиум")])
-    return ReplyKeyboardMarkup(keyboard=buttons, resize_keyboard=True, input_field_placeholder="Выбери действие...")
-
-
-def profile_action_kb(target_id: int):
-    buttons = [
-        [
-            InlineKeyboardButton(text="❌", callback_data=f"dislike:{target_id}"),
-            InlineKeyboardButton(text="❤️", callback_data=f"like:{target_id}"),
-        ],
-        [
-            InlineKeyboardButton(text="💎 Супер-лайк", callback_data=f"superlike:{target_id}"),
-        ],
-        [
-            InlineKeyboardButton(text="🚫 Жалоба", callback_data=f"report:{target_id}"),
-        ]
-    ]
-    return InlineKeyboardMarkup(inline_keyboard=buttons)
-
-
-def premium_kb():
-    buttons = []
-    for key, info in PREMIUM_PRICES.items():
-        buttons.append([InlineKeyboardButton(
-            text=f"💎 {info['label']} — {info['price']}₽",
-            callback_data=f"buy:{key}"
-        )])
-    buttons.append([InlineKeyboardButton(text="🔙 Назад", callback_data="back_main")])
-    return InlineKeyboardMarkup(inline_keyboard=buttons)
-
-
-def payment_check_kb(label: str):
-    return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="✅ Я оплатил", callback_data=f"check_payment:{label}")],
-        [InlineKeyboardButton(text="🔙 Назад", callback_data="premium")],
-    ])
-
-
-def settings_kb():
-    return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="✏️ Изменить анкету", callback_data="edit_profile")],
-        [InlineKeyboardButton(text="🔕 Вкл/Выкл анкету", callback_data="toggle_active")],
-        [InlineKeyboardButton(text="🗑 Удалить анкету", callback_data="delete_profile")],
-        [InlineKeyboardButton(text="🔙 Назад", callback_data="back_main")],
-    ])
-
-
-def gender_kb(prefix: str = "gender"):
-    return InlineKeyboardMarkup(inline_keyboard=[
-        [
-            InlineKeyboardButton(text="👨 Парень", callback_data=f"{prefix}:male"),
-            InlineKeyboardButton(text="👩 Девушка", callback_data=f"{prefix}:female"),
-        ]
-    ])
-
-
-def looking_for_kb():
-    return InlineKeyboardMarkup(inline_keyboard=[
-        [
-            InlineKeyboardButton(text="👨 Парней", callback_data="look:male"),
-            InlineKeyboardButton(text="👩 Девушек", callback_data="look:female"),
-        ],
-        [InlineKeyboardButton(text="🌈 Всех", callback_data="look:all")],
-    ])
-
-
-def city_kb():
-    cities = ["Москва", "СПб", "Донецк", "Луганск", "Краснодар", "Екатеринбург", "Другой"]
-    buttons = []
-    row = []
-    for i, city in enumerate(cities):
-        row.append(InlineKeyboardButton(text=city, callback_data=f"city:{city}"))
-        if (i + 1) % 2 == 0:
-            buttons.append(row)
-            row = []
-    if row:
-        buttons.append(row)
-    return InlineKeyboardMarkup(inline_keyboard=buttons)
-
-
-# ==================== FSM STATES ====================
-class RegStates(StatesGroup):
+# ========== БОТ И ДИСПЕТЧЕР ==========
+bot = Bot(
+    token=BOT_TOKEN,
+    default=DefaultBotProperties(parse_mode=ParseMode.HTML)
+)
+dp = Dispatcher(storage=MemoryStorage())
+
+# ========== БАЗА ДАННЫХ (В ПАМЯТИ) ==========
+users_db: Dict[int, dict] = {}
+profiles_db: Dict[int, dict] = {}
+likes_db: Dict[int, List[int]] = {}
+matches_db: Dict[int, List[int]] = {}
+reports_db: Dict[int, List[dict]] = {}
+pending_payments: Dict[str, dict] = {}
+user_current_view: Dict[int, int] = {}
+
+# ========== FSM СОСТОЯНИЯ РЕГИСТРАЦИИ ==========
+class Registration(StatesGroup):
     name = State()
     age = State()
     gender = State()
-    city = State()
-    city_manual = State()
     looking_for = State()
-    photo = State()
+    city = State()
     bio = State()
+    photo = State()
     confirm = State()
 
-
-class EditStates(StatesGroup):
+class EditProfile(StatesGroup):
     field = State()
     value = State()
 
+class ReportState(StatesGroup):
+    reason = State()
 
-# ==================== ROUTER ====================
-router = Router()
+class MessageState(StatesGroup):
+    target_id = State()
 
+# ========== ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ==========
+def get_user(user_id: int) -> dict:
+    if user_id not in users_db:
+        users_db[user_id] = {
+            "id": user_id,
+            "registered": False,
+            "premium_until": None,
+            "daily_likes": 0,
+            "daily_messages": 0,
+            "last_reset": datetime.now().date(),
+            "banned": False,
+            "created_at": datetime.now(),
+            "notifications": True,
+        }
+    return users_db[user_id]
 
-# ==================== WELCOME SCREEN ====================
-async def send_welcome(message: Message):
-    welcome_text = (
-        "Привет! Это LoveSpark — бот знакомств для всей России, ДНР и ЛНР.\n\n"
-        "Здесь ты найдешь:\n"
-        "• Умный подбор анкет по твоему городу\n"
-        "• Безопасное общение через мэтчи\n"
-        "• Премиум-функции для максимального результата\n\n"
-        "Готов найти свою искру? Нажми кнопку ниже!"
-    )
+def get_profile(user_id: int) -> Optional[dict]:
+    return profiles_db.get(user_id)
+
+def is_premium(user_id: int) -> bool:
+    user = get_user(user_id)
+    if user.get("premium_until"):
+        return datetime.now() < user["premium_until"]
+    return False
+
+def get_limits(user_id: int) -> dict:
+    if is_premium(user_id):
+        return PREMIUM_LIMITS
+    return FREE_LIMITS
+
+def reset_daily_limits(user_id: int):
+    user = get_user(user_id)
+    today = datetime.now().date()
+    if user.get("last_reset") != today:
+        user["daily_likes"] = 0
+        user["daily_messages"] = 0
+        user["last_reset"] = today
+
+def format_age(age: int) -> str:
+    if age % 10 == 1 and age % 100 != 11:
+        return f"{age} год"
+    elif 2 <= age % 10 <= 4 and not (12 <= age % 100 <= 14):
+        return f"{age} года"
+    else:
+        return f"{age} лет"
+
+def generate_profile_text(profile: dict, user_id: int) -> str:
+    gender_emoji = {"male": "👨", "female": "👩", "other": "🌈"}.get(profile.get("gender", ""), "👤")
+    looking_map = {"male": "мужчин", "female": "женщин", "all": "всех"}
+    looking_emoji = {"male": "👨", "female": "👩", "all": "💕"}.get(profile.get("looking_for", ""), "💕")
+    premium_badge = "\n💎 <b>ПРЕМИУМ ПОЛЬЗОВАТЕЛЬ</b>" if is_premium(user_id) else ""
+
+    text = f"""{gender_emoji} <b>{profile.get('name', 'Неизвестно')}</b>, {format_age(profile.get('age', 0))}
+📍 {profile.get('city', 'Не указан')}
+🔍 Ищу: {looking_emoji} {looking_map.get(profile.get('looking_for', 'all'), 'всех')}{premium_badge}
+
+📝 О себе:
+<i>{profile.get('bio', 'Нет описания')}</i>
+
+✨ Анкета создана: {profile.get('created_at', 'недавно')}"""
+    return text
+
+def get_main_menu(user_id: int) -> ReplyKeyboardMarkup:
+    is_premium_user = is_premium(user_id)
+    kb = [
+        [KeyboardButton(text="🔍 Смотреть анкеты")],
+        [KeyboardButton(text="❤️ Мои лайки"), KeyboardButton(text="💬 Мои чаты")],
+        [KeyboardButton(text="👤 Моя анкета"), KeyboardButton(text="✏️ Редактировать")],
+        [KeyboardButton(text="👑 Мой премиум" if is_premium_user else "💎 Премиум")],
+        [KeyboardButton(text="⚙️ Настройки"), KeyboardButton(text="📊 Статистика")],
+    ]
+    return ReplyKeyboardMarkup(keyboard=kb, resize_keyboard=True)
+
+def get_inline_profile_actions(target_id: int, has_liked: bool = False) -> InlineKeyboardMarkup:
+    buttons = [
+        [
+            InlineKeyboardButton(text="❤️ Лайк", callback_data=f"like_{target_id}"),
+            InlineKeyboardButton(text="💌 Написать", callback_data=f"message_{target_id}"),
+        ],
+        [
+            InlineKeyboardButton(text="👎 Пропустить", callback_data=f"skip_{target_id}"),
+            InlineKeyboardButton(text="🚫 Жалоба", callback_data=f"report_{target_id}"),
+        ],
+    ]
+    if has_liked:
+        buttons[0][0] = InlineKeyboardButton(text="💔 Убрать лайк", callback_data=f"unlike_{target_id}")
+    return InlineKeyboardMarkup(inline_keyboard=buttons)
+
+def get_compatible_profiles(user_id: int) -> List[tuple]:
+    profile = get_profile(user_id)
+    if not profile:
+        return []
+
+    candidates = []
+    for uid, p in profiles_db.items():
+        if uid == user_id:
+            continue
+        if not p.get("active", True):
+            continue
+        if p.get("banned", False):
+            continue
+        # Проверяем совместимость
+        if profile.get("looking_for") != "all" and p.get("gender") != profile.get("looking_for"):
+            continue
+        if p.get("looking_for") != "all" and profile.get("gender") != p.get("looking_for"):
+            continue
+        candidates.append((uid, p))
+
+    random.shuffle(candidates)
+    return candidates
+
+async def show_next_profile(user_id: int, message: Message):
+    candidates = get_compatible_profiles(user_id)
+    if not candidates:
+        await message.answer(
+            "😔 Пока нет подходящих анкет. Попробуй позже или расширь критерии поиска!\n\n"
+            "💡 Совет: оформи премиум для поиска в радиусе 500 км!",
+            reply_markup=get_main_menu(user_id)
+        )
+        return
+
+    target_id, target_profile = candidates[0]
+    user_current_view[user_id] = target_id
+
+    text = generate_profile_text(target_profile, target_id)
+    has_liked = user_id in likes_db.get(target_id, [])
+
+    if target_profile.get("photos"):
+        await message.answer_photo(
+            photo=target_profile["photos"][0],
+            caption=text,
+            reply_markup=get_inline_profile_actions(target_id, has_liked)
+        )
+    else:
+        await message.answer(
+            text,
+            reply_markup=get_inline_profile_actions(target_id, has_liked)
+        )
+
+# ========== YOOMONEY API ==========
+async def check_yoomoney_payment(label: str) -> Optional[dict]:
+    """Проверяет историю операций ЮMoney по label"""
+    url = "https://yoomoney.ru/api/operation-history"
+    headers = {
+        "Authorization": f"Bearer {YOOMONEY_TOKEN}",
+        "Content-Type": "application/x-www-form-urlencoded"
+    }
+    data = {
+        "type": "deposition",
+        "label": label,
+        "details": "true"
+    }
+
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.post(url, headers=headers, data=data) as resp:
+                if resp.status == 200:
+                    result = await resp.json()
+                    operations = result.get("operations", [])
+                    if operations:
+                        op = operations[0]
+                        if op.get("status") == "success":
+                            return {
+                                "success": True,
+                                "amount": op.get("amount", 0),
+                                "operation_id": op.get("operation_id"),
+                            }
+    except Exception as e:
+        logger.error(f"YooMoney API error: {e}")
+
+    return None
+
+# ========== КОМАНДЫ ==========
+@dp.message(CommandStart())
+async def cmd_start(message: Message, state: FSMContext):
+    user_id = message.from_user.id
+    user = get_user(user_id)
+
+    if user["registered"] and get_profile(user_id):
+        await message.answer(
+            "👋 С возвращением в LoveSpark!\n\n"
+            "Что будем делать сегодня?",
+            reply_markup=get_main_menu(user_id)
+        )
+        return
+
+    welcome_text = """✨ <b>Добро пожаловать в LoveSpark!</b> ✨
+
+🔥 <b>Лучший бот знакомств для всей России!</b>
+
+❤️ Находи свою половинку среди тысяч пользователей
+💬 Общайся без ограничений с премиумом
+🎯 Умные фильтры поиска по городу и интересам
+🔒 Полная безопасность и анонимность
+
+<i>Знакомства в Москве, Санкт-Петербурге, Донецке, Луганске и во всех городах России!</i>
+
+<b>Нажми кнопку ниже, чтобы начать регистрацию анкеты 👇</b>"""
 
     kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="✨ Создать анкету", callback_data="start_reg")],
-        [InlineKeyboardButton(text="📖 Узнать больше", callback_data="about")],
+        [InlineKeyboardButton(text="🚀 Создать анкету", callback_data="start_reg")],
+        [InlineKeyboardButton(text="📖 Как это работает", callback_data="how_it_works")],
+        [InlineKeyboardButton(text="💎 Тарифы премиум", callback_data="premium_info")],
     ])
 
     await message.answer(welcome_text, reply_markup=kb)
 
-
-# ==================== HANDLERS ====================
-@router.message(Command("start"))
-async def cmd_start(message: Message, state: FSMContext):
-    await state.clear()
-    user = get_or_create_user(
-        message.from_user.id,
-        message.from_user.username,
-        message.from_user.first_name
-    )
-    profile = get_profile(message.from_user.id)
-
-    if profile:
-        likes_remaining = get_remaining_likes(message.from_user.id)
-        premium_status = "💎 Premium активен!" if is_premium(message.from_user.id) else "💎 Купи Premium для безлимита!"
-        text = (
-            "С возвращением в LoveSpark!\n\n"
-            + "👤 Твоя анкета активна\n"
-            + f"❤️ Лайков сегодня: {likes_remaining}\n"
-            + f"{premium_status}\n\n"
-            + "Выбери действие:"
-        )
-        await message.answer(
-            text,
-            reply_markup=main_menu_kb(is_premium(message.from_user.id))
-        )
-    else:
-        await send_welcome(message)
-
-
-@router.callback_query(F.data == "start_reg")
+@dp.callback_query(F.data == "start_reg")
 async def start_registration(callback: CallbackQuery, state: FSMContext):
     await callback.message.delete()
-    await callback.message.answer("Давай создадим твою анкету. Как тебя зовут?")
-    await state.set_state(RegStates.name)
-
-
-@router.callback_query(F.data == "about")
-async def show_about(callback: CallbackQuery):
-    text = (
-        "LoveSpark — это умный бот для знакомств.\n\n"
-        "Как это работает:\n"
-        "1️⃣ Создаешь анкету с фото и описанием\n"
-        "2️⃣ Просматриваешь анкеты других\n"
-        "3️⃣ Ставишь лайки понравившимся\n"
-        "4️⃣ При взаимном лайке — мэтч!\n"
-        "5️⃣ Начинаешь общение!\n\n"
-        "Premium открывает безлимитные лайки, супер-лайки, просмотр кто лайкнул и многое другое."
+    await callback.message.answer(
+        "🌟 <b>Начинаем создание твоей анкеты!</b>\n\n"
+        "Как тебя зовут? (напиши свое имя)",
+        reply_markup=ReplyKeyboardRemove()
     )
-    kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="✨ Создать анкету", callback_data="start_reg")],
-        [InlineKeyboardButton(text="🔙 Назад", callback_data="back_welcome")],
-    ])
-    await callback.message.edit_text(text, reply_markup=kb)
+    await state.set_state(Registration.name)
+    await callback.answer()
 
-
-@router.callback_query(F.data == "back_welcome")
-async def back_to_welcome(callback: CallbackQuery):
-    await callback.message.delete()
-    await send_welcome(callback.message)
-
-
-# ----- REGISTRATION -----
-@router.message(RegStates.name)
+@dp.message(Registration.name)
 async def reg_name(message: Message, state: FSMContext):
-    if len(message.text) > 50:
-        await message.answer("Имя слишком длинное! Максимум 50 символов.")
+    name = message.text.strip()
+    if len(name) < 2 or len(name) > 30:
+        await message.answer("❌ Имя должно быть от 2 до 30 символов. Попробуй еще раз:")
         return
-    await state.update_data(name=message.text)
-    await message.answer("Сколько тебе лет? (18-80)")
-    await state.set_state(RegStates.age)
+    await state.update_data(name=name)
+    await message.answer("🎂 Сколько тебе лет? (напиши число)")
+    await state.set_state(Registration.age)
 
-
-@router.message(RegStates.age)
+@dp.message(Registration.age)
 async def reg_age(message: Message, state: FSMContext):
-    if not message.text.isdigit():
-        await message.answer("Введи число, пожалуйста.")
+    try:
+        age = int(message.text.strip())
+        if age < 16 or age > 100:
+            await message.answer("❌ Возраст должен быть от 16 до 100 лет. Попробуй еще раз:")
+            return
+    except ValueError:
+        await message.answer("❌ Напиши число, например: 25")
         return
-    age = int(message.text)
-    if not (18 <= age <= 80):
-        await message.answer("Возраст должен быть от 18 до 80 лет.")
-        return
+
     await state.update_data(age=age)
-    await message.answer("Твой пол?", reply_markup=gender_kb("gender"))
-    await state.set_state(RegStates.gender)
-
-
-@router.callback_query(RegStates.gender, F.data.startswith("gender:"))
-async def reg_gender(callback: CallbackQuery, state: FSMContext):
-    gender = callback.data.split(":")[1]
-    await state.update_data(gender=gender)
-    await callback.message.edit_text("📍 Выбери свой город:", reply_markup=city_kb())
-    await state.set_state(RegStates.city)
-
-
-@router.callback_query(RegStates.city, F.data.startswith("city:"))
-async def reg_city(callback: CallbackQuery, state: FSMContext):
-    city = callback.data.split(":")[1]
-    if city == "Другой":
-        await callback.message.edit_text("Напиши название своего города:")
-        await state.set_state(RegStates.city_manual)
-        return
-    await state.update_data(city=city)
-    await callback.message.edit_text("Кого ты ищешь?", reply_markup=looking_for_kb())
-    await state.set_state(RegStates.looking_for)
-
-
-@router.message(RegStates.city_manual)
-async def reg_city_manual(message: Message, state: FSMContext):
-    await state.update_data(city=message.text)
-    await message.answer("Кого ты ищешь?", reply_markup=looking_for_kb())
-    await state.set_state(RegStates.looking_for)
-
-
-@router.callback_query(RegStates.looking_for, F.data.startswith("look:"))
-async def reg_looking_for(callback: CallbackQuery, state: FSMContext):
-    looking = callback.data.split(":")[1]
-    await state.update_data(looking_for=looking)
-    await callback.message.edit_text("Отправь свое лучшее фото 📸")
-    await state.set_state(RegStates.photo)
-
-
-@router.message(RegStates.photo, F.photo)
-async def reg_photo(message: Message, state: FSMContext):
-    photo_id = message.photo[-1].file_id
-    await state.update_data(photo_id=photo_id)
-    await message.answer("Расскажи о себе (хобби, интересы, цели) — до 300 символов:")
-    await state.set_state(RegStates.bio)
-
-
-@router.message(RegStates.photo)
-async def reg_photo_invalid(message: Message, state: FSMContext):
-    await message.answer("Пожалуйста, отправь фото 📸")
-
-
-@router.message(RegStates.bio)
-async def reg_bio(message: Message, state: FSMContext):
-    if len(message.text) > 300:
-        await message.answer("Слишком длинно! Максимум 300 символов.")
-        return
-    await state.update_data(bio=message.text)
-    data = await state.get_data()
-
-    gender_emoji = "👨" if data["gender"] == "male" else "👩"
-    looking_emoji = {"male": "👨 Парней", "female": "👩 Девушек", "all": "🌈 Всех"}[data["looking_for"]]
-
-    preview = (
-        "📋 Твоя анкета:\n\n"
-        + f"{gender_emoji} {data['name']}, {data['age']} лет\n"
-        + f"📍 {data['city']}\n"
-        + f"📝 {data['bio']}\n\n"
-        + f"🔍 Ищет: {looking_emoji}\n\n"
-        + "Все верно?"
-    )
-
     kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="✅ Да, все верно", callback_data="confirm:yes")],
-        [InlineKeyboardButton(text="🔄 Начать заново", callback_data="confirm:no")],
+        [InlineKeyboardButton(text="👨 Мужчина", callback_data="gender_male")],
+        [InlineKeyboardButton(text="👩 Женщина", callback_data="gender_female")],
+        [InlineKeyboardButton(text="🌈 Другой", callback_data="gender_other")],
+    ])
+    await message.answer("👤 Какой твой пол?", reply_markup=kb)
+    await state.set_state(Registration.gender)
+
+@dp.callback_query(F.data.startswith("gender_"))
+async def reg_gender(callback: CallbackQuery, state: FSMContext):
+    gender = callback.data.split("_")[1]
+    await state.update_data(gender=gender)
+
+    looking_kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="👨 Мужчин", callback_data="looking_male")],
+        [InlineKeyboardButton(text="👩 Женщин", callback_data="looking_female")],
+        [InlineKeyboardButton(text="💕 Всех", callback_data="looking_all")],
     ])
 
-    await message.answer_photo(
-        photo=data["photo_id"],
-        caption=preview,
-        reply_markup=kb
-    )
-    await state.set_state(RegStates.confirm)
+    await callback.message.edit_text("🔍 Кого ты ищешь?", reply_markup=looking_kb)
+    await state.set_state(Registration.looking_for)
+    await callback.answer()
 
+@dp.callback_query(F.data.startswith("looking_"))
+async def reg_looking(callback: CallbackQuery, state: FSMContext):
+    looking = callback.data.split("_")[1]
+    looking_map = {"male": "мужчин", "female": "женщин", "all": "всех"}
+    await state.update_data(looking_for=looking, looking_for_text=looking_map[looking])
 
-@router.callback_query(RegStates.confirm, F.data.startswith("confirm:"))
-async def reg_confirm(callback: CallbackQuery, state: FSMContext):
-    answer = callback.data.split(":")[1]
-    if answer == "yes":
-        data = await state.get_data()
-        save_profile(callback.from_user.id, data)
-        await callback.message.delete()
-        text = (
-            "🎉 Анкета создана!\n\n"
-            + "Теперь ты можешь:\n"
-            + "• 🔍 Смотреть анкеты\n"
-            + "• ❤️ Ставить лайки\n"
-            + "• 💎 Купить Premium для безлимита\n\n"
-            + "Удачи в поисках! 🔥"
-        )
-        await callback.message.answer(
-            text,
-            reply_markup=main_menu_kb()
-        )
-        await state.clear()
-    else:
-        await callback.message.delete()
-        await callback.message.answer("Давай создадим анкету заново. Как тебя зовут?")
-        await state.set_state(RegStates.name)
+    cities_text = "📍 Напиши название своего города:\n\n"
+    cities_text += "<i>Например: Москва, Санкт-Петербург, Донецк, Луганск...</i>"
 
-
-# ----- BROWSE PROFILES -----
-async def show_next_profile(message: Message, user_id: int):
-    profile = get_next_profile(user_id)
-    if not profile:
-        text = (
-            "😔 Пока нет новых анкет.\n"
-            + "Попробуй зайти позже или измени фильтры в настройках."
-        )
-        await message.answer(
-            text,
-            reply_markup=main_menu_kb(is_premium(user_id))
-        )
-        return
-
-    update_profile_activity(user_id)
-
-    gender_emoji = "👨" if profile["gender"] == "male" else "👩"
-    premium_badge = " 💎" if profile["is_premium"] else ""
-    likes_remaining = get_remaining_likes(user_id)
-
-    text = (
-        f"{gender_emoji} *{profile['name']}*, {profile['age']} лет{premium_badge}\n"
-        + f"📍 {profile['city']}\n"
-        + f"📝 {profile['bio'] or 'Нет описания'}\n\n"
-        + f"❤️ Лайков осталось: *{likes_remaining}*"
-    )
-
-    kb = profile_action_kb(profile["user_id"])
-
-    await message.answer_photo(
-        photo=profile["photo_id"],
-        caption=text,
-        parse_mode=ParseMode.MARKDOWN,
-        reply_markup=kb
-    )
-
-
-@router.message(F.text == "🔍 Смотреть анкеты")
-async def browse_profiles(message: Message, state: FSMContext):
-    await state.clear()
-    profile = get_profile(message.from_user.id)
-    if not profile:
-        await message.answer(
-            "Сначала создай анкету! Напиши /start",
-            reply_markup=ReplyKeyboardMarkup(
-                keyboard=[[KeyboardButton(text="/start")]],
-                resize_keyboard=True
-            )
-        )
-        return
-    await show_next_profile(message, message.from_user.id)
-
-
-@router.callback_query(F.data.startswith("dislike:"))
-async def dislike_profile(callback: CallbackQuery):
-    target_id = int(callback.data.split(":")[1])
-    mark_viewed(callback.from_user.id, target_id, "dislike")
-    await callback.answer("⏭ Пропущено")
     await callback.message.delete()
-    await show_next_profile(callback.message, callback.from_user.id)
+    await callback.message.answer(cities_text)
+    await state.set_state(Registration.city)
+    await callback.answer()
 
-
-@router.callback_query(F.data.startswith("like:"))
-async def like_profile(callback: CallbackQuery):
-    target_id = int(callback.data.split(":")[1])
-    user_id = callback.from_user.id
-
-    if not decrement_likes(user_id):
-        await callback.answer(
-            "💎 Лимит лайков исчерпан! Купи Premium для безлимита.",
-            show_alert=True
-        )
+@dp.message(Registration.city)
+async def reg_city(message: Message, state: FSMContext):
+    city = message.text.strip()
+    if len(city) < 2 or len(city) > 50:
+        await message.answer("❌ Название города слишком короткое или длинное. Попробуй еще раз:")
         return
 
-    mark_viewed(user_id, target_id, "like")
-    is_match = add_like(user_id, target_id)
+    await state.update_data(city=city)
+    await message.answer(
+        "📝 Расскажи немного о себе (хобби, интересы, что ищешь):\n"
+        "<i>Минимум 10 символов, максимум 500</i>"
+    )
+    await state.set_state(Registration.bio)
 
-    if is_match:
-        await callback.answer("🔥 МЭТЧ!", show_alert=True)
-        await callback.message.delete()
+@dp.message(Registration.bio)
+async def reg_bio(message: Message, state: FSMContext):
+    bio = message.text.strip()
+    if len(bio) < 10:
+        await message.answer("❌ Описание слишком короткое. Расскажи о себе подробнее:")
+        return
+    if len(bio) > 500:
+        await message.answer("❌ Описание слишком длинное (максимум 500 символов). Сократи:")
+        return
 
-        my_profile = get_profile(user_id)
-        target_profile = get_profile(target_id)
+    await state.update_data(bio=bio)
+    await message.answer(
+        "📸 Отправь свое фото для анкеты:\n\n"
+        "<i>Желательно хорошее качество, где видно лицо 😊</i>\n"
+        "<i>Можно отправить несколько фото (до 3 для бесплатных, до 10 для премиум)</i>"
+    )
+    await state.set_state(Registration.photo)
 
-        await callback.message.answer(
-            f"🎉 *У вас мэтч с {target_profile['name']}!*\n\n"
-            + "Начни общение! 💬",
-            parse_mode=ParseMode.MARKDOWN
+@dp.message(Registration.photo, F.photo)
+async def reg_photo(message: Message, state: FSMContext):
+    photos = message.photo
+    photo_file_id = photos[-1].file_id
+
+    data = await state.get_data()
+    photos_list = data.get("photos", [])
+    photos_list.append(photo_file_id)
+    await state.update_data(photos=photos_list)
+
+    limits = get_limits(message.from_user.id)
+    max_photos = limits["profile_photos"]
+
+    if len(photos_list) < max_photos:
+        kb = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="✅ Это все, продолжить", callback_data="photos_done")],
+            [InlineKeyboardButton(text="📸 Добавить еще фото", callback_data="more_photos")],
+        ])
+        await message.answer(
+            f"📷 Фото {len(photos_list)} добавлено (макс {max_photos}). Хочешь добавить еще?",
+            reply_markup=kb
         )
+    else:
+        await finish_registration(message, state)
 
-        try:
-            await callback.bot.send_message(
-                target_id,
-                f"🎉 *У вас мэтч с {my_profile['name']}!*\n\n"
-                + "Кто-то только что поставил тебе лайк взаимно! Заходи в бота! 🔥",
-                parse_mode=ParseMode.MARKDOWN
-            )
-        except Exception:
-            pass
+@dp.callback_query(F.data == "more_photos")
+async def more_photos(callback: CallbackQuery, state: FSMContext):
+    await callback.message.edit_text("📸 Отправь еще фото:")
+    await callback.answer()
+
+@dp.callback_query(F.data == "photos_done")
+async def photos_done(callback: CallbackQuery, state: FSMContext):
+    await finish_registration(callback.message, state)
+    await callback.answer()
+
+async def finish_registration(message: Message, state: FSMContext):
+    data = await state.get_data()
+    user_id = message.from_user.id
+
+    profile = {
+        "user_id": user_id,
+        "name": data["name"],
+        "age": data["age"],
+        "gender": data["gender"],
+        "looking_for": data["looking_for"],
+        "looking_for_text": data["looking_for_text"],
+        "city": data["city"],
+        "bio": data["bio"],
+        "photos": data.get("photos", []),
+        "created_at": datetime.now().strftime("%d.%m.%Y"),
+        "active": True,
+    }
+
+    profiles_db[user_id] = profile
+    users_db[user_id]["registered"] = True
+
+    await state.clear()
+
+    profile_text = generate_profile_text(profile, user_id)
+
+    if profile["photos"]:
+        await message.answer_photo(
+            photo=profile["photos"][0],
+            caption=profile_text,
+            reply_markup=get_main_menu(user_id)
+        )
+    else:
+        await message.answer(profile_text, reply_markup=get_main_menu(user_id))
+
+    welcome_msg = """🎉 <b>Анкета создана!</b>
+
+Теперь ты можешь:
+🔍 <b>Смотреть анкеты</b> — найди интересных людей
+❤️ <b>Ставить лайки</b> — покажи симпатию
+💬 <b>Общаться</b> — при взаимном интересе
+
+<i>💡 Совет: оформи премиум, чтобы снять все ограничения!</i>"""
+    await message.answer(welcome_msg)
+
+# ========== ГЛАВНОЕ МЕНЮ ==========
+@dp.message(F.text == "🔍 Смотреть анкеты")
+async def browse_profiles(message: Message):
+    user_id = message.from_user.id
+    reset_daily_limits(user_id)
+
+    profile = get_profile(user_id)
+    if not profile:
+        await message.answer("❌ Сначала создай анкету! Напиши /start")
+        return
+
+    await show_next_profile(user_id, message)
+
+@dp.callback_query(F.data.startswith("like_"))
+async def like_profile(callback: CallbackQuery):
+    user_id = callback.from_user.id
+    target_id = int(callback.data.split("_")[1])
+
+    reset_daily_limits(user_id)
+    limits = get_limits(user_id)
+    user = get_user(user_id)
+
+    if user["daily_likes"] >= limits["daily_likes"]:
+        await callback.answer("❌ Лимит лайков на сегодня исчерпан! Оформи премиум 💎", show_alert=True)
+        return
+
+    if target_id not in likes_db:
+        likes_db[target_id] = []
+
+    if user_id not in likes_db[target_id]:
+        likes_db[target_id].append(user_id)
+        user["daily_likes"] += 1
+
+    # Проверяем взаимный лайк
+    if target_id in likes_db.get(user_id, []):
+        if user_id not in matches_db.get(target_id, []):
+            if target_id not in matches_db:
+                matches_db[target_id] = []
+            if user_id not in matches_db:
+                matches_db[user_id] = []
+            matches_db[target_id].append(user_id)
+            matches_db[user_id].append(target_id)
+
+            # Уведомляем обоих
+            target_profile = get_profile(user_id)
+            my_profile = get_profile(target_id)
+
+            if target_profile:
+                await bot.send_message(
+                    target_id,
+                    f"🎉 <b>Взаимная симпатия!</b>\n\n"
+                    f"❤️ Тебе понравился(ась) <b>{target_profile['name']}</b>, {target_profile['age']}!\n"
+                    f"💬 Начни общение — нажми на кнопку ниже!",
+                    reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                        [InlineKeyboardButton(text="💌 Написать", callback_data=f"message_{user_id}")]
+                    ])
+                )
+
+            if my_profile:
+                await callback.message.answer(
+                    f"🎉 <b>Взаимная симпатия!</b>\n\n"
+                    f"❤️ Ты понравился(ась) <b>{my_profile['name']}</b>!\n"
+                    f"💬 Начни общение!"
+                )
+
+        await callback.answer("🎉 Взаимная симпатия!")
     else:
         await callback.answer("❤️ Лайк отправлен!")
-        await callback.message.delete()
 
-    await show_next_profile(callback.message, user_id)
+    await callback.message.edit_reply_markup(
+        reply_markup=get_inline_profile_actions(target_id, True)
+    )
 
-
-@router.callback_query(F.data.startswith("superlike:"))
-async def superlike_profile(callback: CallbackQuery):
-    target_id = int(callback.data.split(":")[1])
+@dp.callback_query(F.data.startswith("unlike_"))
+async def unlike_profile(callback: CallbackQuery):
     user_id = callback.from_user.id
+    target_id = int(callback.data.split("_")[1])
+
+    if target_id in likes_db and user_id in likes_db[target_id]:
+        likes_db[target_id].remove(user_id)
+
+    await callback.answer("💔 Лайк убран")
+    await callback.message.edit_reply_markup(
+        reply_markup=get_inline_profile_actions(target_id, False)
+    )
+
+@dp.callback_query(F.data.startswith("message_"))
+async def send_message_handler(callback: CallbackQuery, state: FSMContext):
+    user_id = callback.from_user.id
+    target_id = int(callback.data.split("_")[1])
+
+    # Проверяем, есть ли взаимный лайк или премиум
+    if not is_premium(user_id):
+        has_match = target_id in matches_db.get(user_id, [])
+        if not has_match:
+            await callback.answer(
+                "💎 Нужен премиум или взаимный лайк для отправки сообщений!",
+                show_alert=True
+            )
+            return
+
+    await state.update_data(message_target=target_id)
+    target_profile = get_profile(target_id)
+    name = target_profile['name'] if target_profile else "пользователю"
+
+    await callback.message.answer(
+        f"💌 Напиши сообщение для <b>{name}</b>:\n"
+        f"<i>Он(а) получит его сразу!</i>"
+    )
+    await state.set_state(MessageState.target_id)
+    await callback.answer()
+
+@dp.message(MessageState.target_id)
+async def send_direct_message(message: Message, state: FSMContext):
+    data = await state.get_data()
+    target_id = data.get("message_target")
+
+    if not target_id:
+        await state.clear()
+        return
+
+    user_id = message.from_user.id
+    reset_daily_limits(user_id)
+    limits = get_limits(user_id)
+    user = get_user(user_id)
 
     if not is_premium(user_id):
-        await callback.answer(
-            "💎 Супер-лайк доступен только в Premium!",
-            show_alert=True
+        if user["daily_messages"] >= limits["daily_messages"]:
+            await message.answer(
+                "❌ Лимит сообщений на сегодня исчерпан!\n"
+                "💎 Оформи премиум для безлимитных сообщений!"
+            )
+            await state.clear()
+            return
+        user["daily_messages"] += 1
+
+    my_profile = get_profile(user_id)
+    sender_name = my_profile['name'] if my_profile else "Аноним"
+
+    await bot.send_message(
+        target_id,
+        f"💌 <b>Новое сообщение от {sender_name}:</b>\n\n"
+        f"{message.text}\n\n"
+        f"<i>Ответь через бота — нажми кнопку ниже 👇</i>",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="💌 Ответить", callback_data=f"message_{user_id}")]
+        ])
+    )
+
+    await message.answer("✅ Сообщение отправлено!")
+    await state.clear()
+
+@dp.callback_query(F.data.startswith("skip_"))
+async def skip_profile(callback: CallbackQuery):
+    user_id = callback.from_user.id
+    await callback.message.delete()
+    await callback.answer("👎 Пропущено")
+    await show_next_profile(user_id, callback.message)
+
+@dp.callback_query(F.data.startswith("report_"))
+async def report_profile(callback: CallbackQuery, state: FSMContext):
+    target_id = int(callback.data.split("_")[1])
+    await state.update_data(report_target=target_id)
+
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🖼 Фейк/обман", callback_data="report_fake")],
+        [InlineKeyboardButton(text="🔞 Неприемлемый контент", callback_data="report_inappropriate")],
+        [InlineKeyboardButton(text="💢 Оскорбления", callback_data="report_harass")],
+        [InlineKeyboardButton(text="❌ Отмена", callback_data="report_cancel")],
+    ])
+
+    await callback.message.edit_text("🚫 Выбери причину жалобы:", reply_markup=kb)
+    await state.set_state(ReportState.reason)
+    await callback.answer()
+
+@dp.callback_query(F.data.startswith("report_"), ReportState.reason)
+async def report_reason(callback: CallbackQuery, state: FSMContext):
+    if callback.data == "report_cancel":
+        await state.clear()
+        await callback.message.edit_text("❌ Жалоба отменена")
+        await callback.answer()
+        return
+
+    data = await state.get_data()
+    target_id = data.get("report_target")
+    reason = callback.data.replace("report_", "")
+
+    if target_id not in reports_db:
+        reports_db[target_id] = []
+
+    reports_db[target_id].append({
+        "from": callback.from_user.id,
+        "reason": reason,
+        "time": datetime.now().strftime("%Y-%m-%d %H:%M")
+    })
+
+    # Уведомляем админа
+    await bot.send_message(
+        ADMIN_ID,
+        f"🚫 <b>Новая жалоба!</b>\n\n"
+        f"От: {callback.from_user.id}\n"
+        f"На: {target_id}\n"
+        f"Причина: {reason}\n"
+        f"Всего жалоб: {len(reports_db[target_id])}"
+    )
+
+    await callback.message.edit_text("✅ Жалоба отправлена администратору. Спасибо!")
+    await state.clear()
+    await callback.answer()
+
+# ========== ПРЕМИУМ ==========
+@dp.message(F.text.in_(["💎 Премиум", "👑 Мой премиум"]))
+async def premium_menu(message: Message):
+    user_id = message.from_user.id
+
+    if is_premium(user_id):
+        premium_until = users_db[user_id]["premium_until"]
+        await message.answer(
+            f"👑 <b>Твой премиум активен!</b>\n\n"
+            f"💎 Действует до: {premium_until.strftime('%d.%m.%Y')}\n\n"
+            f"✅ Безлимитные лайки\n"
+            f"✅ Безлимитные сообщения\n"
+            f"✅ Видеть, кто тебя лайкнул\n"
+            f"✅ Расширенные фильтры\n"
+            f"✅ До 10 фото в анкете\n"
+            f"✅ Радиус поиска 500 км\n\n"
+            f"🎉 Наслаждайся общением!",
+            reply_markup=get_main_menu(user_id)
         )
         return
 
-    mark_viewed(user_id, target_id, "superlike")
-    is_match = add_like(user_id, target_id, superlike=True)
+    text = """💎 <b>LoveSpark Премиум</b> 💎
 
-    try:
-        my_profile = get_profile(user_id)
-        await callback.bot.send_message(
-            target_id,
-            f"💎 *Супер-лайк!*\n\n"
-            + f"{my_profile['name']} отправил(а) тебе супер-лайк!\n"
-            + "Он(а) явно заинтересован(а) — заходи в бота! 🔥",
-            parse_mode=ParseMode.MARKDOWN
+<b>Что ты получаешь:</b>
+✅ Безлимитные лайки ❤️
+✅ Безлимитные сообщения 💬
+✅ Видеть, кто тебя лайкнул 👀
+✅ Расширенные фильтры поиска 🔍
+✅ До 10 фото в анкете 📸
+✅ Радиус поиска 500 км 🌍
+✅ Буст анкеты (показывайся первым) 🚀
+✅ Значок премиум в анкете 💎
+
+<b>Тарифы:</b>"""
+
+    for key, plan in PREMIUM_PRICES.items():
+        text += f"\n{plan['emoji']} <b>{plan['name']}</b> — {plan['price']}₽"
+
+    text += "\n\n<i>💡 Чем дольше подписка, тем выгоднее!</i>"
+
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text=f"📅 Неделя — 199₽", callback_data="buy_week")],
+        [InlineKeyboardButton(text=f"🌙 Месяц — 499₽", callback_data="buy_month")],
+        [InlineKeyboardButton(text=f"⭐ 3 месяца — 1299₽", callback_data="buy_quarter")],
+        [InlineKeyboardButton(text=f"💎 6 месяцев — 1999₽", callback_data="buy_half_year")],
+        [InlineKeyboardButton(text=f"👑 Год — 3499₽", callback_data="buy_year")],
+    ])
+
+    await message.answer(text, reply_markup=kb)
+
+@dp.callback_query(F.data.startswith("buy_"))
+async def buy_premium(callback: CallbackQuery):
+    plan_key = callback.data.split("_")[1]
+    plan = PREMIUM_PRICES.get(plan_key)
+
+    if not plan:
+        await callback.answer("❌ Ошибка", show_alert=True)
+        return
+
+    payment_id = f"LS_{callback.from_user.id}_{plan_key}_{int(datetime.now().timestamp())}"
+
+    # Сохраняем платеж
+    pending_payments[payment_id] = {
+        "user_id": callback.from_user.id,
+        "plan_key": plan_key,
+        "amount": plan["price"],
+        "created": datetime.now(),
+    }
+
+    # Формируем ссылку на оплату ЮMoney QuickPay
+    yoomoney_url = (
+        f"https://yoomoney.ru/quickpay/confirm?"
+        f"receiver={YOOMONEY_WALLET}&"
+        f"quickpay-form=button&"
+        f"paymentType=AC&"
+        f"sum={plan['price']}&"
+        f"label={payment_id}&"
+        f"successURL=https://t.me/LoveSparkBot"
+    )
+
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text=f"💳 Оплатить {plan['price']}₽", url=yoomoney_url)],
+        [InlineKeyboardButton(text="✅ Я оплатил", callback_data=f"check_{payment_id}")],
+        [InlineKeyboardButton(text="🔙 Назад", callback_data="premium_info")],
+    ])
+
+    await callback.message.edit_text(
+        f"💎 <b>Оформление премиума: {plan['name']}</b>\n\n"
+        f"Сумма: <b>{plan['price']}₽</b>\n"
+        f"Срок: {plan['days']} дней\n\n"
+        f"1️⃣ Нажми «Оплатить» и соверши платеж через ЮMoney\n"
+        f"2️⃣ После оплаты нажми «Я оплатил»\n\n"
+        f"<i>Средства поступят мгновенно!</i>",
+        reply_markup=kb
+    )
+    await callback.answer()
+
+@dp.callback_query(F.data.startswith("check_"))
+async def check_payment(callback: CallbackQuery):
+    payment_id = callback.data.split("check_")[1]
+    payment = pending_payments.get(payment_id)
+
+    if not payment:
+        await callback.answer("❌ Платеж не найден", show_alert=True)
+        return
+
+    # Проверяем через API ЮMoney
+    result = await check_yoomoney_payment(payment_id)
+
+    if result and result["success"]:
+        plan_key = payment["plan_key"]
+        plan = PREMIUM_PRICES[plan_key]
+        user_id = payment["user_id"]
+
+        premium_until = datetime.now() + timedelta(days=plan['days'])
+        users_db[user_id]["premium_until"] = premium_until
+
+        # Удаляем из pending
+        del pending_payments[payment_id]
+
+        await callback.message.edit_text(
+            f"🎉 <b>Премиум активирован!</b>\n\n"
+            f"💎 Тариф: {plan['name']}\n"
+            f"📅 Действует до: {premium_until.strftime('%d.%m.%Y')}\n\n"
+            f"✅ Все ограничения сняты!\n"
+            f"🎉 Наслаждайся общением! ❤️"
         )
-    except Exception:
-        pass
 
-    if is_match:
-        await callback.answer("🔥 МЭТЧ + СУПЕР-ЛАЙК!", show_alert=True)
+        # Уведомляем админа
+        await bot.send_message(
+            ADMIN_ID,
+            f"💰 <b>Новая оплата!</b>\n\n"
+            f"Пользователь: {user_id}\n"
+            f"Тариф: {plan['name']}\n"
+            f"Сумма: {plan['price']}₽"
+        )
     else:
-        await callback.answer("💎 Супер-лайк отправлен!", show_alert=True)
-
-    await callback.message.delete()
-    await show_next_profile(callback.message, user_id)
-
-
-@router.callback_query(F.data.startswith("report:"))
-async def report_profile(callback: CallbackQuery):
-    target_id = int(callback.data.split(":")[1])
-    await callback.answer("🚫 Жалоба отправлена модератору", show_alert=True)
-    await callback.message.delete()
-    await show_next_profile(callback.message, callback.from_user.id)
-
-
-# ----- WHO LIKED ME -----
-@router.message(F.text == "❤️ Кто лайкнул")
-async def who_liked(message: Message):
-    if not is_premium(message.from_user.id):
-        text = (
-            "💎 *Просмотр лайков — Premium-функция*\n\n"
-            + "Узнай, кто тебя лайкнул, и начни общение первым!\n"
-            + "Без Premium ты видишь лайки только при взаимном мэтче."
+        await callback.answer(
+            "⏳ Платеж еще не поступил. Попробуй через минуту!",
+            show_alert=True
         )
-        await message.answer(
-            text,
-            parse_mode=ParseMode.MARKDOWN,
+
+# ========== МОЯ АНКЕТА ==========
+@dp.message(F.text == "👤 Моя анкета")
+async def my_profile(message: Message):
+    user_id = message.from_user.id
+    profile = get_profile(user_id)
+
+    if not profile:
+        await message.answer("❌ У тебя нет анкеты. Напиши /start")
+        return
+
+    text = generate_profile_text(profile, user_id)
+
+    if profile.get("photos"):
+        await message.answer_photo(
+            photo=profile["photos"][0],
+            caption=text,
             reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-                [InlineKeyboardButton(text="💎 Купить Premium", callback_data="premium")]
+                [InlineKeyboardButton(text="📸 Все фото", callback_data="view_all_photos")],
+            ])
+        )
+    else:
+        await message.answer(text)
+
+@dp.callback_query(F.data == "view_all_photos")
+async def view_all_photos(callback: CallbackQuery):
+    user_id = callback.from_user.id
+    profile = get_profile(user_id)
+
+    if not profile or not profile.get("photos"):
+        await callback.answer("❌ Нет фото", show_alert=True)
+        return
+
+    media = []
+    for i, photo in enumerate(profile["photos"]):
+        if i == 0:
+            media.append(InputMediaPhoto(media=photo, caption=f"📸 Фото {i+1}/{len(profile['photos'])}"))
+        else:
+            media.append(InputMediaPhoto(media=photo))
+
+    await callback.message.answer_media_group(media=media)
+    await callback.answer()
+
+# ========== РЕДАКТИРОВАНИЕ ==========
+@dp.message(F.text == "✏️ Редактировать")
+async def edit_profile_menu(message: Message):
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="📝 Имя", callback_data="edit_name")],
+        [InlineKeyboardButton(text="🎂 Возраст", callback_data="edit_age")],
+        [InlineKeyboardButton(text="📍 Город", callback_data="edit_city")],
+        [InlineKeyboardButton(text="📝 О себе", callback_data="edit_bio")],
+        [InlineKeyboardButton(text="📸 Фото", callback_data="edit_photos")],
+        [InlineKeyboardButton(text="🔍 Кого ищу", callback_data="edit_looking")],
+    ])
+    await message.answer("✏️ Что хочешь изменить?", reply_markup=kb)
+
+@dp.callback_query(F.data.startswith("edit_"))
+async def edit_field(callback: CallbackQuery, state: FSMContext):
+    field = callback.data.split("_")[1]
+    await state.update_data(edit_field=field)
+
+    field_names = {
+        "name": "имя",
+        "age": "возраст",
+        "city": "город",
+        "bio": "описание",
+        "photos": "фото",
+        "looking": "предпочтения в поиске"
+    }
+
+    if field == "photos":
+        await callback.message.edit_text(
+            "📸 Отправь новое фото:\n\n"
+            "<i>Текущие фото будут заменены</i>"
+        )
+    elif field == "looking":
+        kb = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="👨 Мужчин", callback_data="editlooking_male")],
+            [InlineKeyboardButton(text="👩 Женщин", callback_data="editlooking_female")],
+            [InlineKeyboardButton(text="💕 Всех", callback_data="editlooking_all")],
+        ])
+        await callback.message.edit_text("🔍 Кого ищешь?", reply_markup=kb)
+        return
+    else:
+        await callback.message.edit_text(f"✏️ Введи новое {field_names.get(field, 'значение')}:")
+
+    await state.set_state(EditProfile.value)
+    await callback.answer()
+
+@dp.message(EditProfile.value)
+async def edit_value(message: Message, state: FSMContext):
+    data = await state.get_data()
+    field = data.get("edit_field")
+    user_id = message.from_user.id
+
+    if not field or user_id not in profiles_db:
+        await state.clear()
+        return
+
+    value = message.text.strip()
+
+    if field == "name":
+        if len(value) < 2 or len(value) > 30:
+            await message.answer("❌ Имя должно быть от 2 до 30 символов")
+            return
+        profiles_db[user_id]["name"] = value
+    elif field == "age":
+        try:
+            age = int(value)
+            if age < 16 or age > 100:
+                await message.answer("❌ Возраст от 16 до 100")
+                return
+            profiles_db[user_id]["age"] = age
+        except ValueError:
+            await message.answer("❌ Напиши число")
+            return
+    elif field == "city":
+        if len(value) < 2 or len(value) > 50:
+            await message.answer("❌ Слишком короткое или длинное название")
+            return
+        profiles_db[user_id]["city"] = value
+    elif field == "bio":
+        if len(value) < 10 or len(value) > 500:
+            await message.answer("❌ От 10 до 500 символов")
+            return
+        profiles_db[user_id]["bio"] = value
+
+    await message.answer("✅ Изменения сохранены!")
+    await state.clear()
+
+@dp.callback_query(F.data.startswith("editlooking_"))
+async def edit_looking(callback: CallbackQuery):
+    looking = callback.data.split("_")[1]
+    user_id = callback.from_user.id
+    looking_map = {"male": "мужчин", "female": "женщин", "all": "всех"}
+
+    if user_id in profiles_db:
+        profiles_db[user_id]["looking_for"] = looking
+        profiles_db[user_id]["looking_for_text"] = looking_map[looking]
+
+    await callback.message.edit_text("✅ Предпочтения обновлены!")
+    await callback.answer()
+
+# ========== ЛАЙКИ ==========
+@dp.message(F.text == "❤️ Мои лайки")
+async def my_likes(message: Message):
+    user_id = message.from_user.id
+    likes = likes_db.get(user_id, [])
+
+    if not likes:
+        await message.answer(
+            "😔 Пока никто не лайкнул тебя.\n\n"
+            "Скоро обязательно кто-то появится! ❤️\n\n"
+            "💡 Совет: активнее ставь лайки другим — это увеличит твою видимость!"
+        )
+        return
+
+    limits = get_limits(user_id)
+    if not limits["can_see_likes"]:
+        await message.answer(
+            "💎 <b>Функция доступна только для премиум-пользователей!</b>\n\n"
+            "Оформи премиум, чтобы увидеть, кто тебя лайкнул 👀",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="💎 Оформить премиум", callback_data="premium_info")]
             ])
         )
         return
 
-    likes = get_likes_to_user(message.from_user.id)
-    if not likes:
-        text = (
-            "😔 Пока никто не лайкнул тебя.\n"
-            + "Ставь лайки другим — и тебя заметят!"
-        )
-        await message.answer(
-            text,
-            reply_markup=main_menu_kb(is_premium=True)
-        )
-        return
+    text = f"❤️ <b>Тебя лайкнули ({len(likes)}):</b>\n\n"
+    for liker_id in likes[:20]:
+        p = get_profile(liker_id)
+        if p:
+            text += f"• {p['name']}, {p['age']} — {p['city']}\n"
 
-    await message.answer(f"❤️ *Тебя лайкнули ({len(likes)} человек):*", parse_mode=ParseMode.MARKDOWN)
+    if len(likes) > 20:
+        text += f"\n...и еще {len(likes) - 20} человек"
 
-    for like in likes[:5]:
-        gender_emoji = "👨" if like.get('gender') == 'male' else "👩"
-        text = (
-            f"{gender_emoji} *{like['name']}*, {like['age']} лет\n"
-            + f"📍 {like['city']}\n"
-            + f"{'💎 Супер-лайк!' if like['is_superlike'] else '❤️ Обычный лайк'}"
-        )
-        kb = InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="❤️ Лайк в ответ", callback_data=f"like_back:{like['from_user_id']}")],
-            [InlineKeyboardButton(text="❌ Пропустить", callback_data=f"dislike_back:{like['from_user_id']}")],
-        ])
+    await message.answer(text)
 
-        if like.get("photo_id"):
-            await message.answer_photo(photo=like["photo_id"], caption=text, reply_markup=kb, parse_mode=ParseMode.MARKDOWN)
-        else:
-            await message.answer(text, reply_markup=kb, parse_mode=ParseMode.MARKDOWN)
+# ========== ЧАТЫ ==========
+@dp.message(F.text == "💬 Мои чаты")
+async def my_chats(message: Message):
+    user_id = message.from_user.id
+    matches = matches_db.get(user_id, [])
 
-
-@router.callback_query(F.data.startswith("like_back:"))
-async def like_back(callback: CallbackQuery):
-    target_id = int(callback.data.split(":")[1])
-    is_match = add_like(callback.from_user.id, target_id)
-
-    if is_match:
-        await callback.answer("🔥 МЭТЧ!", show_alert=True)
-        my_profile = get_profile(callback.from_user.id)
-        await callback.bot.send_message(
-            target_id,
-            f"🎉 *Мэтч с {my_profile['name']}!*\n\n"
-            + "Вы понравились друг другу! Начни общение! 🔥",
-            parse_mode=ParseMode.MARKDOWN
-        )
-    else:
-        await callback.answer("❤️ Лайк отправлен!")
-
-    await callback.message.delete()
-
-
-@router.callback_query(F.data.startswith("dislike_back:"))
-async def dislike_back(callback: CallbackQuery):
-    await callback.answer("⏭ Пропущено")
-    await callback.message.delete()
-
-
-# ----- MATCHES -----
-@router.message(F.text == "💌 Мои мэтчи")
-async def my_matches(message: Message):
-    matches = get_matches(message.from_user.id)
     if not matches:
-        text = (
-            "😔 У тебя пока нет мэтчей.\n"
-            + "Ставь больше лайков — кто-то обязательно ответит взаимностью!"
-        )
         await message.answer(
-            text,
-            reply_markup=main_menu_kb(is_premium(message.from_user.id))
+            "💬 <b>Пока нет взаимных симпатий.</b>\n\n"
+            "Ставь лайки анкетам, и когда кто-то ответит взаимностью, вы сможете общаться! ❤️"
         )
         return
 
-    await message.answer(f"💌 *Твои мэтчи ({len(matches)}):*", parse_mode=ParseMode.MARKDOWN)
+    text = "💕 <b>Взаимные симпатии:</b>\n\n"
+    kb_buttons = []
+    for match_id in matches:
+        p = get_profile(match_id)
+        if p:
+            text += f"• {p['name']}, {p['age']} — {p['city']}\n"
+            kb_buttons.append([InlineKeyboardButton(
+                text=f"💌 Написать {p['name']}",
+                callback_data=f"message_{match_id}"
+            )])
 
-    for match in matches:
-        gender_emoji = "👨" if match.get('gender') == 'male' else "👩"
-        text = (
-            f"{gender_emoji} *{match['name']}*, {match['age']} лет\n"
-            + f"📍 {match['city']}\n"
-            + f"📝 {match['bio'] or 'Нет описания'}"
-        )
-        kb = InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="💬 Написать", url=f"tg://user?id={match['partner_id']}")],
-        ])
+    await message.answer(text, reply_markup=InlineKeyboardMarkup(inline_keyboard=kb_buttons))
 
-        if match.get("photo_id"):
-            await message.answer_photo(photo=match["photo_id"], caption=text, reply_markup=kb, parse_mode=ParseMode.MARKDOWN)
-        else:
-            await message.answer(text, reply_markup=kb, parse_mode=ParseMode.MARKDOWN)
-
-
-# ----- PREMIUM WITH YOOMONEY -----
-@router.message(F.text == "💎 Премиум")
-@router.callback_query(F.data == "premium")
-async def show_premium(event: Message | CallbackQuery):
-    text = (
-        "💎 *LoveSpark Premium*\n\n"
-        + "Открой все возможности:\n"
-        + "• ❤️ *Безлимитные лайки* — смотри и лайкай сколько угодно\n"
-        + "• ⭐ *Супер-лайки* — выделись и привлеки внимание\n"
-        + "• 👀 *Просмотр лайков* — узнай, кто тебя лайкнул\n"
-        + "• 🚀 *Приоритет в поиске* — тебя видят чаще\n"
-        + "• 🔍 *Расширенные фильтры* — ищи по росту, интересам, целям\n"
-        + "• ↩️ *Возврат дизлайка* — отмени случайный пропуск\n"
-        + "• 👻 *Режим невидимки* — смотри анкеты анонимно\n"
-        + "• 🛡️ *Без рекламы* — чистый интерфейс\n"
-        + "• 💎 *VIP-значок* — выделись среди других\n\n"
-        + "Выбери тариф:"
-    )
-
-    if isinstance(event, CallbackQuery):
-        await event.message.edit_text(text, parse_mode=ParseMode.MARKDOWN, reply_markup=premium_kb())
-    else:
-        await event.answer(text, parse_mode=ParseMode.MARKDOWN, reply_markup=premium_kb())
-
-
-@router.callback_query(F.data.startswith("buy:"))
-async def process_buy(callback: CallbackQuery):
-    plan = callback.data.split(":")[1]
-    info = PREMIUM_PRICES[plan]
-    user_id = callback.from_user.id
-
-    # Generate YooMoney payment link
-    payment_url, label = create_yoomoney_payment_link(user_id, plan)
-
-    text = (
-        f"💎 *Оплата Premium — {info['label']}*\n\n"
-        + f"Сумма: *{info['price']}₽*\n"
-        + f"Срок: *{info['days']} дней*\n\n"
-        + "1️⃣ Нажми кнопку «Оплатить» ниже\n"
-        + "2️⃣ Перейди на страницу YooMoney\n"
-        + "3️⃣ Оплати картой или из кошелька\n"
-        + "4️⃣ Вернись в бот и нажми «Я оплатил»\n\n"
-        + "После проверки Premium активируется автоматически!"
-    )
-
-    kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="💳 Оплатить", url=payment_url)],
-        [InlineKeyboardButton(text="✅ Я оплатил", callback_data=f"check_payment:{label}")],
-        [InlineKeyboardButton(text="🔙 Назад", callback_data="premium")],
-    ])
-
-    await callback.message.edit_text(text, parse_mode=ParseMode.MARKDOWN, reply_markup=kb)
-
-
-@router.callback_query(F.data.startswith("check_payment:"))
-async def check_payment(callback: CallbackQuery):
-    label = callback.data.split(":", 1)[1]
-
-    # Check if already processed
-    payment = get_payment_by_label(label)
-    if payment and payment["status"] == "completed":
-        await callback.answer("✅ Premium уже активирован!", show_alert=True)
-        return
-
-    # Check YooMoney API
-    is_paid = check_yoomoney_payment(label)
-
-    if is_paid:
-        update_payment_status(label, "completed")
-        plan = payment["plan"] if payment else "month"
-        activate_premium(callback.from_user.id, plan)
-
-        text = (
-            "🎉 *Оплата подтверждена!*\n\n"
-            + f"💎 Premium активирован на {PREMIUM_PRICES[plan]['days']} дней!\n"
-            + "Наслаждайся безлимитными лайками и всеми Premium-функциями! 🔥"
-        )
-        await callback.message.edit_text(text, parse_mode=ParseMode.MARKDOWN, reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="🏠 Главное меню", callback_data="back_main")]
-        ]))
-    else:
-        await callback.answer(
-            "⏳ Платеж еще не поступил. Попробуй через минуту или заверши оплату по ссылке.",
-            show_alert=True
-        )
-
-
-# ----- MY PROFILE -----
-@router.message(F.text == "👤 Моя анкета")
-async def my_profile(message: Message):
-    profile = get_profile(message.from_user.id)
-    if not profile:
-        await message.answer("У тебя еще нет анкеты. Напиши /start")
-        return
-
-    gender_emoji = "👨" if profile["gender"] == "male" else "👩"
-    premium_badge = " 💎 PREMIUM" if is_premium(message.from_user.id) else ""
-    status = "✅ Активна" if profile["is_active"] else "🔕 Скрыта"
-    likes_remaining = get_remaining_likes(message.from_user.id)
-
-    text = (
-        f"{gender_emoji} *{profile['name']}*, {profile['age']} лет{premium_badge}\n"
-        + f"📍 {profile['city']}\n"
-        + f"📝 {profile['bio'] or 'Нет описания'}\n"
-        + f"🔍 Ищет: {profile['looking_for']}\n"
-        + f"📊 Статус: {status}\n"
-        + f"❤️ Лайков сегодня: {likes_remaining}"
-    )
-
-    await message.answer_photo(
-        photo=profile["photo_id"],
-        caption=text,
-        parse_mode=ParseMode.MARKDOWN,
-        reply_markup=settings_kb()
-    )
-
-
-# ----- SETTINGS -----
-@router.message(F.text == "⚙️ Настройки")
+# ========== НАСТРОЙКИ ==========
+@dp.message(F.text == "⚙️ Настройки")
 async def settings(message: Message):
-    await message.answer("⚙️ *Настройки*", parse_mode=ParseMode.MARKDOWN, reply_markup=settings_kb())
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🔕 Вкл/выкл уведомления", callback_data="toggle_notif")],
+        [InlineKeyboardButton(text="🚫 Удалить анкету", callback_data="delete_profile")],
+        [InlineKeyboardButton(text="📊 Моя статистика", callback_data="my_stats")],
+    ])
+    await message.answer("⚙️ Настройки:", reply_markup=kb)
 
+@dp.callback_query(F.data == "toggle_notif")
+async def toggle_notif(callback: CallbackQuery):
+    user_id = callback.from_user.id
+    users_db[user_id]["notifications"] = not users_db[user_id].get("notifications", True)
+    status = "включены" if users_db[user_id]["notifications"] else "выключены"
+    await callback.answer(f"🔔 Уведомления {status}!")
 
-@router.callback_query(F.data == "edit_profile")
-async def edit_profile(callback: CallbackQuery, state: FSMContext):
-    await callback.message.edit_text(
-        "Что хочешь изменить?\n\n"
-        + "1️⃣ Имя\n"
-        + "2️⃣ Возраст\n"
-        + "3️⃣ Город\n"
-        + "4️⃣ О себе\n"
-        + "5️⃣ Фото\n"
-        + "6️⃣ Кого ищу\n\n"
-        + "Напиши номер (1-6):"
-    )
-    await state.set_state(EditStates.field)
-
-
-@router.message(EditStates.field)
-async def edit_field(message: Message, state: FSMContext):
-    field_map = {
-        "1": "name", "2": "age", "3": "city", "4": "bio", "5": "photo", "6": "looking_for"
-    }
-    choice = message.text.strip()
-    if choice not in field_map:
-        await message.answer("Введи число от 1 до 6:")
-        return
-
-    field = field_map[choice]
-    await state.update_data(edit_field=field)
-
-    prompts = {
-        "name": "Введи новое имя:",
-        "age": "Введи новый возраст:",
-        "city": "Введи новый город:",
-        "bio": "Введи новое описание (до 300 символов):",
-        "photo": "Отправь новое фото:",
-        "looking_for": "Кого ищешь? (парень/девушка/все)"
-    }
-
-    await message.answer(prompts[field])
-    await state.set_state(EditStates.value)
-
-
-@router.message(EditStates.value)
-async def edit_value(message: Message, state: FSMContext):
-    data = await state.get_data()
-    field = data["edit_field"]
-
-    with closing(get_db()) as conn:
-        cursor = conn.cursor()
-
-        if field == "photo":
-            if not message.photo:
-                await message.answer("Отправь фото!")
-                return
-            value = message.photo[-1].file_id
-        elif field == "age":
-            if not message.text.isdigit():
-                await message.answer("Введи число!")
-                return
-            value = int(message.text)
-        elif field == "looking_for":
-            mapping = {"парень": "male", "девушка": "female", "все": "all"}
-            value = mapping.get(message.text.lower())
-            if not value:
-                await message.answer("Напиши: парень, девушка или все")
-                return
-        else:
-            value = message.text
-
-        cursor.execute(f"UPDATE profiles SET {field} = ? WHERE user_id = ?", (value, message.from_user.id))
-        conn.commit()
-
-    await message.answer("✅ Изменения сохранены!", reply_markup=main_menu_kb(is_premium(message.from_user.id)))
-    await state.clear()
-
-
-@router.callback_query(F.data == "toggle_active")
-async def toggle_active(callback: CallbackQuery):
-    profile = get_profile(callback.from_user.id)
-    new_status = 0 if profile["is_active"] else 1
-
-    with closing(get_db()) as conn:
-        cursor = conn.cursor()
-        cursor.execute("UPDATE profiles SET is_active = ? WHERE user_id = ?", (new_status, callback.from_user.id))
-        conn.commit()
-
-    status_text = "✅ Активна" if new_status else "🔕 Скрыта"
-    await callback.answer(f"Анкета теперь {status_text}", show_alert=True)
-    await callback.message.delete()
-
-
-@router.callback_query(F.data == "delete_profile")
+@dp.callback_query(F.data == "delete_profile")
 async def delete_profile(callback: CallbackQuery):
     kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="🗑 Да, удалить", callback_data="confirm_delete")],
-        [InlineKeyboardButton(text="🔙 Отмена", callback_data="back_main")],
+        [InlineKeyboardButton(text="✅ Да, удалить", callback_data="confirm_delete")],
+        [InlineKeyboardButton(text="❌ Отмена", callback_data="cancel_delete")],
     ])
     await callback.message.edit_text(
-        "⚠️ Ты точно хочешь удалить анкету?\n\n"
-        + "Все данные, лайки и мэтчи будут удалены безвозвратно!",
+        "🚫 <b>Ты уверен, что хочешь удалить анкету?</b>\n\n"
+        "Все данные будут безвозвратно удалены!",
         reply_markup=kb
     )
+    await callback.answer()
 
-
-@router.callback_query(F.data == "confirm_delete")
+@dp.callback_query(F.data == "confirm_delete")
 async def confirm_delete(callback: CallbackQuery):
     user_id = callback.from_user.id
-    with closing(get_db()) as conn:
-        cursor = conn.cursor()
-        cursor.execute("DELETE FROM profiles WHERE user_id = ?", (user_id,))
-        cursor.execute("DELETE FROM likes WHERE from_user_id = ? OR to_user_id = ?", (user_id, user_id))
-        cursor.execute("DELETE FROM matches WHERE user1_id = ? OR user2_id = ?", (user_id, user_id))
-        cursor.execute("DELETE FROM viewed_profiles WHERE viewer_id = ? OR viewed_id = ?", (user_id, user_id))
-        conn.commit()
+    if user_id in profiles_db:
+        del profiles_db[user_id]
+    users_db[user_id]["registered"] = False
 
     await callback.message.edit_text(
-        "🗑 Анкета удалена.\n\n"
-        + "Если захочешь вернуться — напиши /start",
-        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="🚀 Начать заново", callback_data="restart")]
-        ])
+        "😢 <b>Анкета удалена.</b>\n\n"
+        "Если передумаешь — всегда можешь создать новую через /start"
     )
+    await callback.answer()
 
+@dp.callback_query(F.data == "cancel_delete")
+async def cancel_delete(callback: CallbackQuery):
+    await callback.message.edit_text("✅ Удаление отменено.")
+    await callback.answer()
 
-@router.callback_query(F.data == "restart")
-async def restart(callback: CallbackQuery, state: FSMContext):
-    await callback.message.delete()
-    await cmd_start(callback.message, state)
+# ========== СТАТИСТИКА ==========
+@dp.message(F.text == "📊 Статистика")
+async def stats(message: Message):
+    user_id = message.from_user.id
+    profile = get_profile(user_id)
 
+    if not profile:
+        await message.answer("❌ Сначала создай анкету!")
+        return
 
-@router.callback_query(F.data == "back_main")
-async def back_main(callback: CallbackQuery):
-    await callback.message.delete()
-    await callback.message.answer(
-        "Главное меню:",
-        reply_markup=main_menu_kb(is_premium(callback.from_user.id))
-    )
+    likes_received = len(likes_db.get(user_id, []))
+    matches_count = len(matches_db.get(user_id, []))
+    days_in_bot = (datetime.now() - users_db[user_id]['created_at']).days
 
+    text = f"""📊 <b>Статистика LoveSpark</b>
 
-# ----- COMMANDS -----
-@router.message(Command("profile"))
-async def cmd_profile(message: Message):
-    await my_profile(message)
+👥 Всего пользователей: {len(profiles_db)}
+❤️ Тебя лайкнули: {likes_received}
+💕 Взаимных симпатий: {matches_count}
+💎 Премиум пользователей: {sum(1 for u in users_db.values() if is_premium(u['id']))}
 
+<b>Твоя активность:</b>
+📅 Дней в боте: {days_in_bot}
+❤️ Лайков сегодня: {users_db[user_id]['daily_likes']}/{get_limits(user_id)['daily_likes']}
+💬 Сообщений сегодня: {users_db[user_id]['daily_messages']}/{get_limits(user_id)['daily_messages']}
 
-@router.message(Command("search"))
-async def cmd_search(message: Message, state: FSMContext):
-    await browse_profiles(message, state)
+<i>Продолжай активность — так тебя заметят больше людей! 🚀</i>"""
 
+    await message.answer(text)
 
-@router.message(Command("likes"))
-async def cmd_likes(message: Message):
-    await who_liked(message)
+@dp.callback_query(F.data == "my_stats")
+async def my_stats(callback: CallbackQuery):
+    await stats(callback.message)
+    await callback.answer()
 
-
-@router.message(Command("premium"))
-async def cmd_premium(message: Message):
-    await show_premium(message)
-
-
-@router.message(Command("settings"))
-async def cmd_settings(message: Message):
-    await settings(message)
-
-
-@router.message(Command("support"))
-async def cmd_support(message: Message):
-    text = (
-        "🆘 *Поддержка LoveSpark*\n\n"
-        + "Если у тебя проблемы с ботом:\n"
-        + "• Анкета не отображается\n"
-        + "• Ошибка оплаты\n"
-        + "• Жалоба на пользователя\n\n"
-        + "Напиши нам: @support_lovespark"
-    )
-    await message.answer(
-        text,
-        parse_mode=ParseMode.MARKDOWN,
-        reply_markup=main_menu_kb(is_premium(message.from_user.id))
-    )
-
-
-@router.message(Command("admin"))
-async def cmd_admin(message: Message):
+# ========== АДМИН ПАНЕЛЬ ==========
+@dp.message(Command("admin"))
+async def admin_panel(message: Message):
     if message.from_user.id != ADMIN_ID:
         return
 
-    with closing(get_db()) as conn:
-        cursor = conn.cursor()
-        cursor.execute("SELECT COUNT(*) FROM users")
-        users_count = cursor.fetchone()[0]
-        cursor.execute("SELECT COUNT(*) FROM profiles")
-        profiles_count = cursor.fetchone()[0]
-        cursor.execute("SELECT COUNT(*) FROM matches")
-        matches_count = cursor.fetchone()[0]
-        cursor.execute("SELECT COUNT(*) FROM users WHERE is_premium = 1")
-        premium_count = cursor.fetchone()[0]
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="📢 Рассылка всем", callback_data="admin_broadcast")],
+        [InlineKeyboardButton(text="📊 Статистика бота", callback_data="admin_stats")],
+        [InlineKeyboardButton(text="👤 Найти пользователя", callback_data="admin_find")],
+        [InlineKeyboardButton(text="🚫 Забанить", callback_data="admin_ban")],
+    ])
+    await message.answer("👑 <b>Админ-панель LoveSpark</b>", reply_markup=kb)
 
-    text = (
-        f"📊 *Статистика LoveSpark*\n\n"
-        + f"👤 Пользователей: {users_count}\n"
-        + f"📋 Анкет: {profiles_count}\n"
-        + f"💌 Мэтчей: {matches_count}\n"
-        + f"💎 Premium: {premium_count}"
-    )
-    await message.answer(text, parse_mode=ParseMode.MARKDOWN)
+@dp.callback_query(F.data == "admin_stats")
+async def admin_stats_cb(callback: CallbackQuery):
+    if callback.from_user.id != ADMIN_ID:
+        return
 
+    total = len(users_db)
+    registered = sum(1 for u in users_db.values() if u["registered"])
+    premium_count = sum(1 for u in users_db.values() if is_premium(u["id"]))
 
-# ----- UNKNOWN MESSAGE -----
-@router.message()
+    text = f"""📊 <b>Статистика бота:</b>
+
+👥 Всего пользователей: {total}
+✅ Зарегистрировано: {registered}
+💎 Премиум: {premium_count}
+📈 Конверсия: {registered/max(total,1)*100:.1f}%
+💰 Активных платежей: {len(pending_payments)}
+🚫 Жалоб: {sum(len(v) for v in reports_db.values())}"""
+
+    await callback.message.edit_text(text)
+    await callback.answer()
+
+@dp.callback_query(F.data == "admin_broadcast")
+async def admin_broadcast(callback: CallbackQuery, state: FSMContext):
+    if callback.from_user.id != ADMIN_ID:
+        return
+    await callback.message.edit_text("📢 Введи текст для рассылки всем пользователям:")
+    await state.set_state(AdminStates.broadcast)
+    await callback.answer()
+
+@dp.message(AdminStates.broadcast)
+async def do_broadcast(message: Message, state: FSMContext):
+    if message.from_user.id != ADMIN_ID:
+        return
+
+    text = message.text
+    sent = 0
+    failed = 0
+
+    for user_id in users_db:
+        try:
+            await bot.send_message(user_id, f"📢 <b>Сообщение от администрации:</b>\n\n{text}")
+            sent += 1
+            await asyncio.sleep(0.05)
+        except:
+            failed += 1
+
+    await message.answer(f"✅ Отправлено: {sent}\n❌ Не удалось: {failed}")
+    await state.clear()
+
+# ========== КАК ЭТО РАБОТАЕТ ==========
+@dp.callback_query(F.data == "how_it_works")
+async def how_it_works(callback: CallbackQuery):
+    text = """📖 <b>Как работает LoveSpark:</b>
+
+1️⃣ <b>Создай анкету</b>
+   Заполни профиль с фото и описанием
+
+2️⃣ <b>Смотри анкеты</b>
+   Листай профили других пользователей
+
+3️⃣ <b>Ставь лайки</b>
+   ❤️ Понравился — ставь лайк
+   👎 Нет — пропускай
+
+4️⃣ <b>Взаимная симпатия</b>
+   Если вы оба поставили лайк — можно общаться! 💕
+
+5️⃣ <b>Общайся</b>
+   Пиши сообщения своим мэтчам
+
+💡 <i>Оформи премиум для безлимитных лайков и сообщений!</i>"""
+
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🚀 Создать анкету", callback_data="start_reg")],
+        [InlineKeyboardButton(text="💎 Тарифы премиум", callback_data="premium_info")],
+    ])
+    await callback.message.edit_text(text, reply_markup=kb)
+    await callback.answer()
+
+@dp.callback_query(F.data == "premium_info")
+async def premium_info(callback: CallbackQuery):
+    await premium_menu(callback.message)
+    await callback.answer()
+
+# ========== КОМАНДА ПОМОЩИ ==========
+@dp.message(Command("help"))
+async def cmd_help(message: Message):
+    text = """❓ <b>Помощь по LoveSpark</b>
+
+/start — Запустить бота / создать анкету
+/help — Эта справка
+/premium — Информация о премиуме
+/profile — Показать свою анкету
+/search — Начать просмотр анкет
+
+<b>Основные функции:</b>
+🔍 Смотреть анкеты — листай и находи людей
+❤️ Мои лайки — кто тебя лайкнул (премиум)
+💬 Мои чаты — взаимные симпатии
+👤 Моя анкета — посмотреть свой профиль
+✏️ Редактировать — изменить данные
+💎 Премиум — оформить подписку
+
+<b>По вопросам:</b> @admin_support"""
+    await message.answer(text)
+
+@dp.message(Command("premium"))
+async def cmd_premium(message: Message):
+    await premium_menu(message)
+
+@dp.message(Command("profile"))
+async def cmd_profile(message: Message):
+    await my_profile(message)
+
+@dp.message(Command("search"))
+async def cmd_search(message: Message):
+    await browse_profiles(message)
+
+# ========== ОБРАБОТКА НЕИЗВЕСТНЫХ СООБЩЕНИЙ ==========
+@dp.message()
 async def unknown_message(message: Message):
+    user_id = message.from_user.id
     await message.answer(
-        "Я не понимаю эту команду. Используй меню ниже 👇",
-        reply_markup=main_menu_kb(is_premium(message.from_user.id))
+        "❓ Я тебя не понял. Используй кнопки меню или команды:\n\n"
+        "/start — начать\n"
+        "/help — помощь\n"
+        "/search — смотреть анкеты",
+        reply_markup=get_main_menu(user_id)
     )
 
-
-# ==================== MAIN ====================
-async def main():
-    init_db()
-
-    bot = Bot(token=BOT_TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.MARKDOWN))
-    dp = Dispatcher(storage=MemoryStorage())
-    dp.include_router(router)
-
-    await bot.set_my_commands([
-        BotCommand(command="start", description="🚀 Начать / Перезапустить"),
+# ========== ЗАПУСК ==========
+async def set_commands():
+    commands = [
+        BotCommand(command="start", description="🚀 Запустить бота"),
+        BotCommand(command="help", description="❓ Помощь"),
+        BotCommand(command="premium", description="💎 Премиум"),
         BotCommand(command="profile", description="👤 Моя анкета"),
         BotCommand(command="search", description="🔍 Смотреть анкеты"),
-        BotCommand(command="likes", description="❤️ Кто лайкнул"),
-        BotCommand(command="premium", description="💎 Premium доступ"),
-        BotCommand(command="settings", description="⚙️ Настройки"),
-        BotCommand(command="support", description="🆘 Поддержка"),
-    ])
+    ]
+    await bot.set_my_commands(commands)
+    await bot.set_chat_menu_button(menu_button=MenuButtonCommands(type="commands"))
 
-    logger.info("LoveSpark bot started!")
+async def main():
+    await set_commands()
+    logger.info("🚀 LoveSpark Bot запущен!")
     await dp.start_polling(bot)
-
 
 if __name__ == "__main__":
     asyncio.run(main())
