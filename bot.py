@@ -9,7 +9,10 @@ import uuid
 import html
 
 from aiogram import Bot, Dispatcher, F
-from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton, ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove
+from aiogram.types import (
+    Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton,
+    ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove
+)
 from aiogram.filters import Command, CommandStart
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
@@ -50,6 +53,27 @@ BOT_DESCRIPTION = "Бот знакомств для всех городов Ро
 DB_NAME = "lovespark.db"
 YOOMONEY_API_URL = "https://yoomoney.ru/api"
 
+# Registration visual constants
+REG_EMOJIS = {
+    "start": "💘", "name": "✨", "age": "🎂", "city": "🏙️",
+    "gender": "👤", "looking": "👀", "goal": "🎯", "interests": "🎨",
+    "photo": "📸", "bio": "📝", "confirm": "🔥", "done": "🎉"
+}
+
+GOALS_MAP = {
+    "relationship": "❤️ Серьёзные отношения",
+    "friendship": "🤝 Дружба и общение",
+    "fun": "😏 Флирт и веселье",
+    "unsure": "🤷 Пока не знаю"
+}
+
+INTERESTS_MAP = {
+    "music": "🎵 Музыка", "sport": "⚽ Спорт", "travel": "✈️ Путешествия",
+    "games": "🎮 Игры", "movies": "🎬 Кино", "books": "📚 Книги",
+    "cooking": "🍳 Готовка", "photo": "📸 Фото", "dance": "💃 Танцы",
+    "auto": "🚗 Авто", "it": "💻 IT", "art": "🎨 Искусство"
+}
+
 # ==================== LOGGING ====================
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
@@ -65,6 +89,8 @@ class Registration(StatesGroup):
     city = State()
     gender = State()
     looking_for = State()
+    goal = State()
+    interests = State()
     photo = State()
     bio = State()
     confirm = State()
@@ -93,7 +119,7 @@ async def init_db():
         await db.executescript("""
             PRAGMA journal_mode = WAL;
             PRAGMA foreign_keys = ON;
-            
+
             CREATE TABLE IF NOT EXISTS users (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 telegram_id INTEGER UNIQUE NOT NULL,
@@ -118,7 +144,9 @@ async def init_db():
                 profile_views INTEGER DEFAULT 0,
                 last_bonus_date TEXT,
                 bonus_likes INTEGER DEFAULT 0,
-                bonus_messages INTEGER DEFAULT 0
+                bonus_messages INTEGER DEFAULT 0,
+                interests TEXT,
+                goal TEXT DEFAULT 'unsure'
             );
             CREATE TABLE IF NOT EXISTS likes (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -188,12 +216,15 @@ async def get_user(telegram_id: int):
             return dict(row) if row else None
 
 async def create_user(telegram_id: int, username: str, name: str, age: int, city: str,
-                     gender: str, looking_for: str, photo: str, bio: str, referral_code: str, referred_by: int = None):
+                     gender: str, looking_for: str, photo: str, bio: str, referral_code: str,
+                     referred_by: int = None, interests: str = "", goal: str = "unsure"):
     async with aiosqlite.connect(DB_NAME) as db:
         await db.execute("""
-            INSERT INTO users (telegram_id, username, name, age, city, gender, looking_for, photo, bio, referral_code, referred_by, last_activity)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """, (telegram_id, username, name, age, city, gender, looking_for, photo, bio, referral_code, referred_by, datetime.datetime.now().isoformat()))
+            INSERT INTO users (telegram_id, username, name, age, city, gender, looking_for, 
+                             photo, bio, referral_code, referred_by, last_activity, interests, goal)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, (telegram_id, username, name, age, city, gender, looking_for, photo, bio, 
+              referral_code, referred_by, datetime.datetime.now().isoformat(), interests, goal))
         await db.commit()
 
 async def update_user(telegram_id: int, **kwargs):
@@ -230,7 +261,7 @@ async def get_random_profile(telegram_id: int):
         else:
             query += " AND gender = ?"
             params.append(user["looking_for"])
-        
+
         query += " AND (looking_for = ? OR looking_for = 'both')"
         params.append(user["gender"])
 
@@ -376,6 +407,23 @@ async def get_user_by_ref_code(code: str):
             row = await cursor.fetchone()
             return dict(row) if row else None
 
+# ==================== GEOCODING ====================
+async def get_city_by_location(lat: float, lon: float):
+    try:
+        async with aiohttp.ClientSession() as session:
+            url = f"https://nominatim.openstreetmap.org/reverse?lat={lat}&lon={lon}&format=json&accept-language=ru"
+            async with session.get(url, headers={"User-Agent": "LoveSparkBot/1.0"}, timeout=aiohttp.ClientTimeout(total=5)) as resp:
+                if resp.status == 200:
+                    data = await resp.json()
+                    address = data.get("address", {})
+                    city = (address.get("city") or address.get("town") or 
+                            address.get("village") or address.get("county") or 
+                            address.get("state"))
+                    return city
+    except Exception as e:
+        logger.error(f"Geocoding error: {e}")
+    return None
+
 # ==================== YOOMONEY ====================
 async def create_payment_ym(amount: int, label: str, description: str = "LoveSpark Premium"):
     desc = html.escape(description)
@@ -486,6 +534,7 @@ def edit_profile_kb():
         [InlineKeyboardButton(text="📸 Фото", callback_data="edit_photo"), InlineKeyboardButton(text="📝 Имя", callback_data="edit_name")],
         [InlineKeyboardButton(text="🔢 Возраст", callback_data="edit_age"), InlineKeyboardButton(text="🏙️ Город", callback_data="edit_city")],
         [InlineKeyboardButton(text="📝 О себе", callback_data="edit_bio"), InlineKeyboardButton(text="👀 Кого ищу", callback_data="edit_looking")],
+        [InlineKeyboardButton(text="🎯 Цель", callback_data="edit_goal"), InlineKeyboardButton(text="🎨 Интересы", callback_data="edit_interests")],
         [InlineKeyboardButton(text="🔙 В меню", callback_data="back_menu")],
     ])
 
@@ -498,6 +547,91 @@ def admin_kb():
 def confirm_delete_kb():
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="✅ Да, удалить", callback_data="confirm_delete"), InlineKeyboardButton(text="❌ Нет, оставить", callback_data="cancel_delete")],
+    ])
+
+# ==================== REGISTRATION KEYBOARDS ====================
+def reg_start_kb():
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="💘 Начать знакомство", callback_data="reg_start")],
+        [InlineKeyboardButton(text="❓ Что это?", callback_data="reg_whatis")]
+    ])
+
+def reg_name_kb(first_name: str):
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text=f"✨ Использовать «{first_name[:20]}»", callback_data="reg_use_name")],
+        [InlineKeyboardButton(text="📝 Ввести другое имя", callback_data="reg_custom_name")]
+    ])
+
+def reg_age_kb():
+    ages = ["18-20", "21-23", "24-26", "27-30", "31-35", "36-40", "40+"]
+    buttons = [[InlineKeyboardButton(text=f"🎂 {a}", callback_data=f"reg_age_{a}")] for a in ages]
+    buttons.append([InlineKeyboardButton(text="🔢 Ввести точный возраст", callback_data="reg_age_custom")])
+    return InlineKeyboardMarkup(inline_keyboard=buttons)
+
+def reg_city_reply_kb():
+    return ReplyKeyboardMarkup(
+        keyboard=[
+            [KeyboardButton(text="📍 Определить по геолокации", request_location=True)],
+            [KeyboardButton(text="📝 Ввести город вручную")]
+        ],
+        resize_keyboard=True,
+        one_time_keyboard=True
+    )
+
+def reg_gender_kb():
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="👨 Я парень", callback_data="reg_gender_male"), 
+         InlineKeyboardButton(text="👩 Я девушка", callback_data="reg_gender_female")]
+    ])
+
+def reg_looking_kb():
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="👨 Парней", callback_data="reg_look_male"), 
+         InlineKeyboardButton(text="👩 Девушек", callback_data="reg_look_female")],
+        [InlineKeyboardButton(text="👫 Всех без разницы", callback_data="reg_look_both")]
+    ])
+
+def reg_goal_kb():
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="❤️ Серьёзные отношения", callback_data="reg_goal_relationship")],
+        [InlineKeyboardButton(text="🤝 Дружба и общение", callback_data="reg_goal_friendship")],
+        [InlineKeyboardButton(text="😏 Флирт и веселье", callback_data="reg_goal_fun")],
+        [InlineKeyboardButton(text="🤷 Пока не знаю", callback_data="reg_goal_unsure")]
+    ])
+
+def reg_interests_kb(selected: set = None):
+    if selected is None: 
+        selected = set()
+    buttons = []
+    row = []
+    for key, label in INTERESTS_MAP.items():
+        icon = "✅ " if key in selected else ""
+        row.append(InlineKeyboardButton(text=f"{icon}{label}", callback_data=f"reg_int_{key}"))
+        if len(row) == 3:
+            buttons.append(row)
+            row = []
+    if row: 
+        buttons.append(row)
+    buttons.append([InlineKeyboardButton(text="✨ Готово! Продолжить →", callback_data="reg_int_done")])
+    return InlineKeyboardMarkup(inline_keyboard=buttons)
+
+def reg_bio_kb():
+    bios = [
+        ("🎸 Люблю музыку, концерты и атмосферу", "music"),
+        ("✈️ Обожаю путешествовать и открывать новое", "travel"),
+        ("🍳 Готовлю лучшие блюда на свете", "cooking"),
+        ("🎮 Игры, кино и уютные вечера дома", "home"),
+        ("🏋️ Спорт и активный образ жизни", "sport"),
+        ("📝 Напишу сам(а)", "custom")
+    ]
+    buttons = [[InlineKeyboardButton(text=text, callback_data=f"reg_bio_{val}")] for text, val in bios]
+    return InlineKeyboardMarkup(inline_keyboard=buttons)
+
+def reg_confirm_kb():
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="✅ Всё идеально! Создать анкету", callback_data="reg_confirm_yes")],
+        [InlineKeyboardButton(text="✏️ Что-то изменить", callback_data="reg_confirm_edit")],
+        [InlineKeyboardButton(text="❌ Начать заново", callback_data="reg_confirm_restart")]
     ])
 
 # ==================== UTILITIES ====================
@@ -516,16 +650,25 @@ def format_profile(user):
     prem_badge = "💎" if get_premium_status(user) else ""
     online_status = "🟢" if user.get("last_activity") and \
         (datetime.datetime.now() - datetime.datetime.fromisoformat(user["last_activity"])).total_seconds() < 300 else "⚪"
-    
+
     name = html.escape(str(user.get('name', 'Неизвестно')))
     city = html.escape(str(user.get('city', 'Не указан')))
     bio = html.escape(str(user.get('bio', 'Нет описания')))
     age = user.get('age', '?')
     views = user.get('profile_views', 0)
-    
+
+    goal = GOALS_MAP.get(user.get('goal', 'unsure'), '')
+    interests_str = user.get('interests', '')
+    interests_display = ""
+    if interests_str:
+        ints = [INTERESTS_MAP.get(i.strip(), i.strip()) for i in interests_str.split(",") if i.strip()]
+        if ints:
+            interests_display = "\n🎨 " + ", ".join(ints)
+
     return (
         f"{gender_emoji} <b>{name}</b>, {age} {prem_badge} {online_status}\n"
         f"🏙️ {city}\n"
+        f"🎯 {goal}{interests_display}\n"
         f"👁️ Просмотров: {views}\n\n"
         f"📝 {bio}"
     )
@@ -556,18 +699,18 @@ async def check_user_banned(message: Message):
         return True
     return False
 
-# ==================== HANDLERS (REGISTRATION) ====================
+# ==================== REGISTRATION HANDLERS ====================
 
 @dp.message(CommandStart())
 async def cmd_start(message: Message, state: FSMContext):
     await state.clear()
-    
+
     ref_code = None
     if message.text and len(message.text.split()) > 1:
         arg = message.text.split()[1]
         if arg.startswith("ref_"):
             ref_code = arg.replace("ref_", "")
-    
+
     user = await get_user(message.from_user.id)
     if user and user.get("is_active"):
         if ref_code and not user.get("referred_by"):
@@ -593,7 +736,7 @@ async def cmd_start(message: Message, state: FSMContext):
                 await message.answer(
                     f"🎉 Ты получил +{REFERRAL_BONUS_LIKES} лайков и +{REFERRAL_BONUS_MSGS} сообщений за регистрацию по реферальной ссылке!"
                 )
-        
+
         likes_to_me = await get_likes_to_me_count(message.from_user.id)
         await message.answer(
             f"💘 <b>С возвращением в LoveSpark!</b>\n\n"
@@ -604,130 +747,394 @@ async def cmd_start(message: Message, state: FSMContext):
             parse_mode=ParseMode.HTML
         )
         return
-        
-    await message.answer(
-        f"💘 <b>LoveSpark - Бот знакомств</b> 💘\n\n"
-        f"Привет! Я помогу тебе найти пару по всей России!\n\n"
-        f"Для начала скажи, как тебя зовут?"
+
+    welcome_text = (
+        f"{REG_EMOJIS['start']} <b>Привет, {html.escape(message.from_user.first_name or 'красавчик')}!</b>\n\n"
+        f"Я — <b>LoveSpark</b>, твой личный помощник в мире знакомств. "
+        f"Здесь ты найдёшь людей, которые ищут то же, что и ты.\n\n"
+        f"✨ <b>Что тебя ждёт:</b>\n"
+        f"• Умный подбор по интересам и городу\n"
+        f"• Мгновенные мэтчи и чаты\n"
+        f"• Безопасность и удобство\n\n"
+        f"Готов найти свою искру? 🔥"
+    )
+    await message.answer(welcome_text, reply_markup=reg_start_kb(), parse_mode=ParseMode.HTML)
+
+@dp.callback_query(F.data == "reg_whatis")
+async def reg_whatis_cb(callback: CallbackQuery):
+    await callback.message.edit_text(
+        "💡 <b>LoveSpark</b> — это бот для знакомств по всей России.\n\n"
+        "Мы подбираем людей по твоему городу, возрасту и интересам. "
+        "Взаимный лайк = мэтч = возможность общаться!\n\n"
+        "Всё просто, безопасно и увлекательно ✨",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="💘 Поехали!", callback_data="reg_start")]
+        ]),
+        parse_mode=ParseMode.HTML
+    )
+
+@dp.callback_query(F.data == "reg_start")
+async def reg_start_cb(callback: CallbackQuery, state: FSMContext):
+    await callback.message.edit_text(
+        f"{REG_EMOJIS['name']} <b>Как к тебе обращаться?</b>\n\n"
+        f"Можешь использовать своё имя из Telegram или ввести другое.",
+        reply_markup=reg_name_kb(callback.from_user.first_name or "Друг"),
+        parse_mode=ParseMode.HTML
     )
     await state.set_state(Registration.name)
 
-@dp.message(Registration.name)
-async def process_name(message: Message, state: FSMContext):
-    name = message.text.strip()
-    if not (2 <= len(name) <= 30): 
-        return await message.answer("Имя должно быть от 2 до 30 символов. Попробуй еще раз:")
+@dp.callback_query(F.data == "reg_use_name", Registration.name)
+async def reg_use_name_cb(callback: CallbackQuery, state: FSMContext):
+    name = callback.from_user.first_name or "Пользователь"
     await state.update_data(name=name)
-    await message.answer("Сколько тебе лет?")
+    await callback.message.edit_text(
+        f"{REG_EMOJIS['age']} <b>Отлично, {html.escape(name)}!</b>\n\n"
+        f"Теперь выбери свой возраст:",
+        reply_markup=reg_age_kb(),
+        parse_mode=ParseMode.HTML
+    )
     await state.set_state(Registration.age)
 
-@dp.message(Registration.age)
-async def process_age(message: Message, state: FSMContext):
-    try:
-        age = int(message.text.strip())
-        if not (16 <= age <= 100): 
-            raise ValueError
-    except ValueError: 
-        return await message.answer("Введи корректный возраст цифрами (от 16 до 100):")
-    await state.update_data(age=age)
-    await message.answer("Выбери свой город:", reply_markup=city_kb())
+@dp.callback_query(F.data == "reg_custom_name", Registration.name)
+async def reg_custom_name_cb(callback: CallbackQuery, state: FSMContext):
+    await callback.message.edit_text(
+        f"{REG_EMOJIS['name']} <b>Как тебя зовут?</b>\n\n"
+        f"Напиши своё имя (от 2 до 30 символов):",
+        parse_mode=ParseMode.HTML
+    )
+
+@dp.message(Registration.name)
+async def process_name_text(message: Message, state: FSMContext):
+    name = message.text.strip()
+    if not (2 <= len(name) <= 30):
+        return await message.answer(
+            f"{REG_EMOJIS['name']} Имя должно быть от 2 до 30 символов. Попробуй ещё раз:"
+        )
+    await state.update_data(name=name)
+    await message.answer(
+        f"{REG_EMOJIS['age']} <b>Отлично, {html.escape(name)}!</b>\n\n"
+        f"Теперь выбери свой возраст:",
+        reply_markup=reg_age_kb(),
+        parse_mode=ParseMode.HTML
+    )
+    await state.set_state(Registration.age)
+
+@dp.callback_query(F.data.startswith("reg_age_"), Registration.age)
+async def reg_age_cb(callback: CallbackQuery, state: FSMContext):
+    data = callback.data.replace("reg_age_", "")
+    if data == "custom":
+        await callback.message.edit_text(
+            f"{REG_EMOJIS['age']} Напиши свой точный возраст цифрами (16-100):",
+            parse_mode=ParseMode.HTML
+        )
+        return
+
+    age = None
+    if data == "40+":
+        age = random.randint(40, 55)
+        await state.update_data(age=age, age_range="40+")
+    else:
+        parts = data.split("-")
+        if len(parts) == 2:
+            age = random.randint(int(parts[0]), int(parts[1]))
+            await state.update_data(age=age, age_range=data)
+        else:
+            return await callback.answer("Ошибка")
+
+    await callback.message.edit_text(
+        f"{REG_EMOJIS['city']} <b>Круто, {age}!</b> 🎉\n\n"
+        f"Теперь скажи, откуда ты?",
+        parse_mode=ParseMode.HTML
+    )
+    await callback.message.answer(
+        f"🏙️ Выбери способ указания города:",
+        reply_markup=reg_city_reply_kb()
+    )
     await state.set_state(Registration.city)
 
-@dp.message(Registration.city)
-async def process_city(message: Message, state: FSMContext):
-    if message.text == "📝 Ввести свой город":
-        await message.answer("Напиши свой город вручную:", reply_markup=ReplyKeyboardRemove())
-        return await state.set_state(CityInput.waiting_city)
-    
-    city = message.text.strip()
-    if len(city) < 2:
-        return await message.answer("Название города слишком короткое. Попробуй ещё:")
-    await state.update_data(city=city)
-    await message.answer("Твой пол:", reply_markup=gender_kb())
-    await state.set_state(Registration.gender)
+@dp.message(Registration.age)
+async def process_age_text(message: Message, state: FSMContext):
+    try:
+        age = int(message.text.strip())
+        if not (16 <= age <= 100):
+            raise ValueError
+    except ValueError:
+        return await message.answer(
+            f"{REG_EMOJIS['age']} Введи корректный возраст цифрами (16-100):"
+        )
+    await state.update_data(age=age)
+    await message.answer(
+        f"{REG_EMOJIS['city']} <b>Круто!</b>\n\n"
+        f"Теперь скажи, откуда ты?",
+        reply_markup=reg_city_reply_kb()
+    )
+    await state.set_state(Registration.city)
 
-@dp.message(CityInput.waiting_city)
-async def process_custom_city(message: Message, state: FSMContext):
+@dp.message(Registration.city, F.location)
+async def process_city_location(message: Message, state: FSMContext):
+    lat = message.location.latitude
+    lon = message.location.longitude
+    await bot.send_chat_action(message.chat.id, "find_location")
+    city = await get_city_by_location(lat, lon)
+
+    if city:
+        await state.update_data(city=city)
+        await message.answer(
+            f"{REG_EMOJIS['city']} <b>Нашёл!</b> 📍\n\n"
+            f"Твой город: <b>{html.escape(city)}</b>",
+            reply_markup=ReplyKeyboardRemove()
+        )
+        await message.answer(
+            f"{REG_EMOJIS['gender']} Теперь определимся с полом:",
+            reply_markup=reg_gender_kb(),
+            parse_mode=ParseMode.HTML
+        )
+        await state.set_state(Registration.gender)
+    else:
+        await message.answer(
+            "😕 Не удалось определить город по геолокации.\n"
+            "Попробуй ввести вручную:",
+            reply_markup=reg_city_reply_kb()
+        )
+
+@dp.message(Registration.city)
+async def process_city_text(message: Message, state: FSMContext):
+    if message.text == "📍 Определить по геолокации":
+        return await message.answer(
+            "Отправь свою геолокацию через скрепку 📎 → Геолокация",
+            reply_markup=reg_city_reply_kb()
+        )
+    if message.text == "📝 Ввести город вручную":
+        return await message.answer(
+            f"{REG_EMOJIS['city']} Напиши название своего города:",
+            reply_markup=ReplyKeyboardRemove()
+        )
+
     city = message.text.strip()
     if len(city) < 2 or len(city) > 50:
-        return await message.answer("Название города должно быть от 2 до 50 символов:")
+        return await message.answer(
+            f"{REG_EMOJIS['city']} Название города должно быть от 2 до 50 символов:"
+        )
+
     await state.update_data(city=city)
-    await message.answer("Твой пол:", reply_markup=gender_kb())
+    await message.answer(
+        f"{REG_EMOJIS['gender']} <b>Отлично, {html.escape(city)}!</b>\n\n"
+        f"Теперь определимся с полом:",
+        reply_markup=reg_gender_kb(),
+        parse_mode=ParseMode.HTML
+    )
     await state.set_state(Registration.gender)
 
-@dp.message(Registration.gender)
-async def process_gender(message: Message, state: FSMContext):
-    genders = {"👨 Мужчина": "male", "👩 Женщина": "female"}
-    if message.text not in genders: 
-        return await message.answer("Пожалуйста, выбери из предложенных кнопок:", reply_markup=gender_kb())
-    await state.update_data(gender=genders[message.text])
-    await message.answer("Кого ты ищешь?", reply_markup=looking_for_kb())
+@dp.callback_query(F.data.startswith("reg_gender_"), Registration.gender)
+async def reg_gender_cb(callback: CallbackQuery, state: FSMContext):
+    gender = callback.data.replace("reg_gender_", "")
+    await state.update_data(gender=gender)
+    await callback.message.edit_text(
+        f"{REG_EMOJIS['looking']} <b>Кого ты ищешь?</b>\n\n"
+        f"Выбирай смело — здесь нет неправильных ответов 😉",
+        reply_markup=reg_looking_kb(),
+        parse_mode=ParseMode.HTML
+    )
     await state.set_state(Registration.looking_for)
 
-@dp.message(Registration.looking_for)
-async def process_looking_for(message: Message, state: FSMContext):
-    looks = {"👨 Мужчин": "male", "👩 Женщин": "female", "👫 Всех": "both"}
-    if message.text not in looks: 
-        return await message.answer("Пожалуйста, выбери из меню:", reply_markup=looking_for_kb())
-    await state.update_data(looking_for=looks[message.text])
-    await message.answer("Отправь свое лучшее фото! 📸", reply_markup=ReplyKeyboardRemove())
-    await state.set_state(Registration.photo)
+@dp.callback_query(F.data.startswith("reg_look_"), Registration.looking_for)
+async def reg_looking_cb(callback: CallbackQuery, state: FSMContext):
+    looking = callback.data.replace("reg_look_", "")
+    await state.update_data(looking_for=looking)
+    await callback.message.edit_text(
+        f"{REG_EMOJIS['goal']} <b>Какая цель знакомства?</b>\n\n"
+        f"Это поможет найти людей с похожими намерениями ✨",
+        reply_markup=reg_goal_kb(),
+        parse_mode=ParseMode.HTML
+    )
+    await state.set_state(Registration.goal)
+
+@dp.callback_query(F.data.startswith("reg_goal_"), Registration.goal)
+async def reg_goal_cb(callback: CallbackQuery, state: FSMContext):
+    goal = callback.data.replace("reg_goal_", "")
+    await state.update_data(goal=goal)
+    await callback.message.edit_text(
+        f"{REG_EMOJIS['interests']} <b>Выбери свои интересы!</b>\n\n"
+        f"Можно выбрать несколько — нажимай на каждый, а потом «Готово» 👇",
+        reply_markup=reg_interests_kb(),
+        parse_mode=ParseMode.HTML
+    )
+    await state.set_state(Registration.interests)
+
+@dp.callback_query(F.data.startswith("reg_int_"), Registration.interests)
+async def reg_interest_cb(callback: CallbackQuery, state: FSMContext):
+    data = callback.data.replace("reg_int_", "")
+    if data == "done":
+        interests_data = await state.get_data()
+        selected = interests_data.get("interests", set())
+        if not selected:
+            return await callback.answer("Выбери хотя бы один интерес!", show_alert=True)
+
+        await state.update_data(interests=",".join(selected))
+        await callback.message.edit_text(
+            f"{REG_EMOJIS['photo']} <b>Время для фото!</b> 📸\n\n"
+            f"Отправь своё лучшее фото — именно так тебя увидят другие.\n\n"
+            f"💡 <i>Совет:</i> улыбнись, хорошее освещение — и успех обеспечен!",
+            parse_mode=ParseMode.HTML
+        )
+        await state.set_state(Registration.photo)
+        return
+
+    current = await state.get_data()
+    selected = set(current.get("interests", []))
+
+    if data in selected:
+        selected.remove(data)
+    else:
+        selected.add(data)
+
+    await state.update_data(interests=selected)
+    await callback.message.edit_reply_markup(reply_markup=reg_interests_kb(selected))
+    await callback.answer()
 
 @dp.message(Registration.photo, F.photo)
 async def process_photo(message: Message, state: FSMContext):
     await state.update_data(photo=message.photo[-1].file_id)
-    await message.answer("Расскажи немного о себе (хобби, интересы):")
+    await message.answer(
+        f"{REG_EMOJIS['bio']} <b>Расскажи о себе!</b>\n\n"
+        f"Это твой шанс произвести впечатление ✨\n"
+        f"Можешь выбрать готовый вариант или написать своё:",
+        reply_markup=reg_bio_kb(),
+        parse_mode=ParseMode.HTML
+    )
     await state.set_state(Registration.bio)
 
 @dp.message(Registration.photo)
 async def process_photo_error(message: Message):
-    await message.answer("Отправь именно фото (не файлом).")
+    await message.answer(
+        f"{REG_EMOJIS['photo']} Это не похоже на фото 😕\n"
+        f"Отправь именно фото, а не файл:"
+    )
+
+@dp.callback_query(F.data.startswith("reg_bio_"), Registration.bio)
+async def reg_bio_cb(callback: CallbackQuery, state: FSMContext):
+    data = callback.data.replace("reg_bio_", "")
+    bios = {
+        "music": "🎸 Люблю живую музыку, концерты и атмосферные вечера. Ищу того, с кем можно танцевать до утра!",
+        "travel": "✈️ Обожаю путешествия! Посетил(а) 10+ стран. Ищу компаньона для новых приключений.",
+        "cooking": "🍳 Готовлю лучшие блюда на свете. Давай устроим ужин при свечах — я готовлю, ты приносишь вино 😉",
+        "home": "🎮 Кино, игры и уютные вечера дома — моё всё. Но иногда хочется кого-то рядом для объятий.",
+        "sport": "🏋️ Спорт и активный образ жизни. Бегаю по утрам, ищу мотивацию и вдохновение рядом."
+    }
+
+    if data == "custom":
+        await callback.message.edit_text(
+            f"{REG_EMOJIS['bio']} <b>Напиши о себе:</b>\n\n"
+            f"Хобби, интересы, что ищешь — всё, что считаешь важным (5-500 символов):",
+            parse_mode=ParseMode.HTML
+        )
+        return
+
+    bio = bios.get(data, "Привет! Ищу интересных людей.")
+    await state.update_data(bio=bio)
+    await show_preview(callback.message, state)
 
 @dp.message(Registration.bio)
-async def process_bio(message: Message, state: FSMContext):
-    if len(message.text) < 5: 
-        return await message.answer("Описание слишком короткое. Напиши еще пару слов:")
+async def process_bio_text(message: Message, state: FSMContext):
+    if len(message.text) < 5:
+        return await message.answer(
+            f"{REG_EMOJIS['bio']} Описание слишком короткое. Расскажи чуть больше о себе:"
+        )
     await state.update_data(bio=message.text[:500])
+    await show_preview(message, state)
+
+async def show_preview(target: Message, state: FSMContext):
     data = await state.get_data()
-    
-    await message.answer_photo(
-        photo=data['photo'], 
-        caption=f"📋 <b>Предпросмотр анкеты:</b>\n\n{format_profile(data)}\n\nВсё верно?",
+
+    gender_emoji = "👨" if data.get('gender') == "male" else "👩"
+    goal_text = GOALS_MAP.get(data.get('goal', 'unsure'), '')
+    interests = data.get('interests', '')
+    if isinstance(interests, str):
+        interest_list = [INTERESTS_MAP.get(i, i) for i in interests.split(",") if i]
+    else:
+        interest_list = [INTERESTS_MAP.get(i, i) for i in interests]
+
+    preview = (
+        f"{gender_emoji} <b>{html.escape(data.get('name', 'Неизвестно'))}</b>, {data.get('age', '?')}\n"
+        f"🏙️ {html.escape(data.get('city', 'Не указан'))}\n"
+        f"🎯 {goal_text}\n"
+        f"🎨 {', '.join(interest_list)}\n\n"
+        f"📝 {html.escape(data.get('bio', 'Нет описания'))}"
+    )
+
+    await target.answer_photo(
+        photo=data['photo'],
+        caption=f"📋 <b>Предпросмотр твоей анкеты:</b>\n\n{preview}\n\n"
+                f"Всё выглядит шикарно? 🔥",
+        reply_markup=reg_confirm_kb(),
         parse_mode=ParseMode.HTML
     )
-    await message.answer("Для подтверждения нажми /confirm, для отмены /cancel")
     await state.set_state(Registration.confirm)
 
-@dp.message(Command("confirm"), Registration.confirm)
-async def confirm_reg(message: Message, state: FSMContext):
+@dp.callback_query(F.data == "reg_confirm_yes", Registration.confirm)
+async def confirm_reg_cb(callback: CallbackQuery, state: FSMContext):
     data = await state.get_data()
     code = f"LS{uuid.uuid4().hex[:6].upper()}"
+
+    interests_str = data.get('interests', '')
+    if isinstance(interests_str, set):
+        interests_str = ",".join(interests_str)
+
     await create_user(
-        message.from_user.id, 
-        message.from_user.username, 
-        data['name'], 
-        data['age'], 
-        data['city'], 
-        data['gender'], 
-        data['looking_for'], 
-        data['photo'], 
-        data['bio'], 
-        code
+        callback.from_user.id,
+        callback.from_user.username,
+        data['name'],
+        data['age'],
+        data['city'],
+        data['gender'],
+        data['looking_for'],
+        data['photo'],
+        data['bio'],
+        code,
+        interests=interests_str,
+        goal=data.get('goal', 'unsure')
     )
     await increment_stat("new_users")
-    await message.answer(
-        "🎉 <b>Анкета создана! Добро пожаловать в LoveSpark!</b>\n\n"
-        f"Твой реферальный код: <code>{code}</code>\n"
-        f"Поделись им с друзьями и получи бонусы!",
+
+    await callback.message.delete()
+    await callback.message.answer(
+        f"{REG_EMOJIS['done']} <b>Анкета создана!</b> 🎉\n\n"
+        f"Добро пожаловать в LoveSpark, {html.escape(data['name'])}!\n\n"
+        f"✨ <b>Твой реферальный код:</b> <code>{code}</code>\n"
+        f"Поделись с друзьями — оба получите бонусы!\n\n"
+        f"💘 Начни поиск прямо сейчас!",
         reply_markup=main_menu_kb(False),
         parse_mode=ParseMode.HTML
     )
     await state.clear()
 
-@dp.message(Command("cancel"), Registration.confirm)
-async def cancel_reg(message: Message, state: FSMContext):
-    await message.answer("Регистрация отменена. Нажми /start чтобы начать заново.")
+@dp.callback_query(F.data == "reg_confirm_edit", Registration.confirm)
+async def edit_reg_cb(callback: CallbackQuery, state: FSMContext):
+    await callback.message.edit_text(
+        "✏️ <b>Что хочешь изменить?</b>",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="📝 Имя", callback_data="edit_name"), InlineKeyboardButton(text="🎂 Возраст", callback_data="edit_age")],
+            [InlineKeyboardButton(text="🏙️ Город", callback_data="edit_city"), InlineKeyboardButton(text="👤 Пол", callback_data="edit_gender")],
+            [InlineKeyboardButton(text="👀 Кого ищу", callback_data="edit_looking"), InlineKeyboardButton(text="🎯 Цель", callback_data="edit_goal")],
+            [InlineKeyboardButton(text="🎨 Интересы", callback_data="edit_interests"), InlineKeyboardButton(text="📸 Фото", callback_data="edit_photo")],
+            [InlineKeyboardButton(text="📝 О себе", callback_data="edit_bio")],
+            [InlineKeyboardButton(text="🔙 Назад к предпросмотру", callback_data="reg_back_preview")]
+        ]),
+        parse_mode=ParseMode.HTML
+    )
+
+@dp.callback_query(F.data == "reg_back_preview")
+async def back_preview_cb(callback: CallbackQuery, state: FSMContext):
+    await show_preview(callback.message, state)
+
+@dp.callback_query(F.data == "reg_confirm_restart", Registration.confirm)
+async def restart_reg_cb(callback: CallbackQuery, state: FSMContext):
     await state.clear()
+    await callback.message.edit_text(
+        "🔄 <b>Начинаем заново!</b>",
+        parse_mode=ParseMode.HTML
+    )
+    await reg_start_cb(callback, state)
 
 # ==================== MAIN MENU HANDLERS ====================
 
@@ -735,13 +1142,13 @@ async def cancel_reg(message: Message, state: FSMContext):
 async def find_pair(message: Message):
     if await check_user_banned(message):
         return
-        
+
     user = await get_user(message.from_user.id)
     if not user: 
         return await message.answer("Создай анкету через /start")
-    
+
     await update_activity(message.from_user.id)
-    
+
     total_likes = get_remaining_likes(user)
     if total_likes == 0:
         return await message.answer(
@@ -751,6 +1158,7 @@ async def find_pair(message: Message):
             reply_markup=main_menu_kb(False)
         )
 
+    await bot.send_chat_action(message.chat.id, "typing")
     profile = await get_random_profile(user['telegram_id'])
     if not profile:
         text = (
@@ -761,9 +1169,9 @@ async def find_pair(message: Message):
             text += "• Купи Премиум для поиска по всей России\n"
         text += "• Пригласи друзей по реферальной ссылке\n• Загляни попозже!"
         return await message.answer(text, reply_markup=main_menu_kb(get_premium_status(user)))
-    
+
     await update_user(profile['telegram_id'], profile_views=profile.get('profile_views', 0) + 1)
-    
+
     await message.answer_photo(
         photo=profile['photo'], 
         caption=format_profile(profile), 
@@ -778,11 +1186,11 @@ async def my_profile(message: Message):
     user = await get_user(message.from_user.id)
     if not user: 
         return await message.answer("Создай анкету через /start")
-    
+
     await update_activity(message.from_user.id)
     status = "💎 Премиум" if get_premium_status(user) else "⭐ Бесплатный"
     likes_to_me = await get_likes_to_me_count(message.from_user.id)
-    
+
     caption = (
         f"{format_profile(user)}\n\n"
         f"📊 Статус: {status}\n"
@@ -809,7 +1217,7 @@ async def my_matches_cmd(message: Message):
             "💔 У тебя пока нет мэтчей.\n"
             "Ставь лайки понравившимся людям!"
         )
-    
+
     await message.answer(f"💕 <b>Твои мэтчи ({len(matches)}):</b>", parse_mode=ParseMode.HTML)
     for m in matches[:10]:
         p_id = m.get('partner_id')
@@ -865,11 +1273,11 @@ async def my_premium_cmd(message: Message):
     user = await get_user(message.from_user.id)
     if not get_premium_status(user): 
         return await message.answer("У тебя нет Премиум подписки.", reply_markup=main_menu_kb(False))
-    
+
     until_str = user.get("premium_until")
     if not until_str:
         return await message.answer("Ошибка данных премиума. Обратись в поддержку.")
-    
+
     try:
         until = datetime.datetime.fromisoformat(until_str)
         days_left = (until - datetime.datetime.now()).days
@@ -888,14 +1296,14 @@ async def who_liked_me_cmd(message: Message):
         return
     user = await get_user(message.from_user.id)
     count = await get_likes_to_me_count(message.from_user.id)
-    
+
     if count == 0:
         return await message.answer(
             "😕 Пока никто тебя не лайкнул.\n"
             "Активнее ставь лайки другим, чтобы тебя заметили!",
             reply_markup=main_menu_kb(get_premium_status(user))
         )
-    
+
     if get_premium_status(user):
         async with aiosqlite.connect(DB_NAME) as db:
             db.row_factory = aiosqlite.Row
@@ -906,7 +1314,7 @@ async def who_liked_me_cmd(message: Message):
                 ORDER BY l.created_at DESC LIMIT 10
             """, (message.from_user.id,)) as cursor:
                 likers = [dict(row) for row in await cursor.fetchall()]
-        
+
         await message.answer(f"🔥 <b>Тебя лайкнули ({count}):</b>", parse_mode=ParseMode.HTML)
         for liker in likers:
             await message.answer_photo(
@@ -934,21 +1342,21 @@ async def daily_bonus_cmd(message: Message):
     user = await get_user(message.from_user.id)
     today = datetime.datetime.now().strftime("%Y-%m-%d")
     last_bonus = user.get("last_bonus_date")
-    
+
     if last_bonus == today:
         return await message.answer(
             "🎁 Ты уже получил бонус сегодня!\n"
             "Приходи завтра за новым!",
             reply_markup=main_menu_kb(get_premium_status(user))
         )
-    
+
     await update_user(
         message.from_user.id,
         last_bonus_date=today,
         bonus_likes=user.get("bonus_likes", 0) + DAILY_BONUS_LIKES,
         bonus_messages=user.get("bonus_messages", 0) + DAILY_BONUS_MSGS
     )
-    
+
     await message.answer(
         f"🎁 <b>Ежедневный бонус получен!</b>\n\n"
         f"❤️ +{DAILY_BONUS_LIKES} лайка\n"
@@ -968,7 +1376,7 @@ async def boost_profile_cmd(message: Message):
             "⬆️ Поднятие анкеты доступно только для Премиум пользователей.",
             reply_markup=main_menu_kb(False)
         )
-    
+
     await update_activity(message.from_user.id)
     await message.answer(
         "🔥 <b>Анкета поднята!</b>\n\n"
@@ -1002,10 +1410,10 @@ async def help_cmd(message: Message):
 async def process_like(callback: CallbackQuery):
     target_id = int(callback.data.split("_")[1])
     user = await get_user(callback.from_user.id)
-    
+
     if not user:
         return await callback.answer("Сначала создай анкету!", show_alert=True)
-    
+
     total_likes = get_remaining_likes(user)
     if total_likes == 0:
         return await callback.answer("Лимит лайков исчерпан! Купи Премиум или возьми бонус.", show_alert=True)
@@ -1013,16 +1421,16 @@ async def process_like(callback: CallbackQuery):
     await update_user(user['telegram_id'], likes_today=user.get("likes_today", 0) + 1)
     is_mutual, match_id = await add_like(user['telegram_id'], target_id)
     await increment_stat("likes_count")
-    
+
     if is_mutual:
         await increment_stat("matches_count")
         partner = await get_user(target_id)
         if not partner:
             return await callback.answer("Ошибка: пользователь не найден.")
-            
+
         partner_name = html.escape(partner['name'])
         my_name = html.escape(user['name'])
-        
+
         await callback.message.answer(
             f"💕 <b>Взаимный мэтч!</b>\n"
             f"Вы и {partner_name} понравились друг другу!\n\n"
@@ -1056,7 +1464,7 @@ async def process_like(callback: CallbackQuery):
         except Exception:
             pass
         await callback.answer("❤️ Лайк отправлен!")
-    
+
     await callback.message.delete()
     await find_pair(callback.message)
 
@@ -1066,7 +1474,7 @@ async def process_superlike(callback: CallbackQuery):
     user = await get_user(callback.from_user.id)
     if not get_premium_status(user): 
         return await callback.answer("Супер-лайки только для Премиум!", show_alert=True)
-    
+
     is_mutual, match_id = await add_like(user['telegram_id'], target_id)
     if is_mutual:
         partner = await get_user(target_id)
@@ -1101,7 +1509,7 @@ async def process_superlike(callback: CallbackQuery):
         except Exception:
             pass
         await callback.answer("⭐ Супер-лайк отправлен!")
-        
+
     await callback.message.delete()
     await find_pair(callback.message)
 
@@ -1126,7 +1534,7 @@ async def process_report(message: Message, state: FSMContext):
     target_id = data.get("report_target")
     if not target_id:
         return await state.clear()
-    
+
     reason = message.text[:500]
     await add_report(message.from_user.id, target_id, reason)
     user = await get_user(message.from_user.id)
@@ -1137,7 +1545,7 @@ async def process_report(message: Message, state: FSMContext):
         reply_markup=main_menu_kb(get_premium_status(user), likes_to_me)
     )
     await state.clear()
-    
+
     try:
         await bot.send_message(
             ADMIN_ID,
@@ -1156,10 +1564,10 @@ async def open_chat(message_or_callback, state: FSMContext, match_id: int, partn
     partner = await get_user(int(partner_id))
     if not partner:
         return await message_or_callback.answer("Пользователь не найден.")
-    
+
     await state.set_state(ChatState.chatting)
     await state.update_data(match_id=int(match_id), partner_id=int(partner_id))
-    
+
     text = (
         f"💬 <b>Чат с {html.escape(partner['name'])}</b>\n"
         f"Отправляй текст, фото, видео, голосовые или стикеры.\n"
@@ -1215,11 +1623,11 @@ async def process_chat_message(message: Message, state: FSMContext):
     partner_id = data.get("partner_id")
     if not partner_id: 
         return await state.clear()
-    
+
     user = await get_user(message.from_user.id)
     if not user:
         return await state.clear()
-        
+
     total_msgs = get_remaining_messages(user)
     if total_msgs == 0:
         return await message.answer(
@@ -1229,7 +1637,7 @@ async def process_chat_message(message: Message, state: FSMContext):
 
     content = message.text or message.caption or "[Вложение]"
     content_type, file_id = "text", None
-    
+
     if message.photo: 
         content_type, file_id = "photo", message.photo[-1].file_id
     elif message.voice: 
@@ -1246,10 +1654,10 @@ async def process_chat_message(message: Message, state: FSMContext):
     await add_message(data["match_id"], message.from_user.id, content_type, content, file_id)
     if not get_premium_status(user): 
         await update_user(user['telegram_id'], messages_today=user.get("messages_today", 0) + 1)
-    
+
     name_safe = html.escape(user['name'])
     content_safe = html.escape(content)
-    
+
     try:
         if content_type == "text": 
             await bot.send_message(
@@ -1296,10 +1704,10 @@ async def select_premium(callback: CallbackQuery):
         return await callback.answer("Ошибка тарифа.")
     tariff = PREMIUM_TARIFFS[tariff_key]
     label = generate_payment_label(callback.from_user.id, tariff_key)
-    
+
     await add_payment(callback.from_user.id, tariff_key, tariff['price'], label)
     url = await create_payment_ym(tariff['price'], label, f"LoveSpark Premium {tariff['name']}")
-    
+
     await callback.message.edit_text(
         f"💎 <b>{tariff['name']}</b>\n"
         f"💰 К оплате: {tariff['price']}₽\n"
@@ -1319,7 +1727,7 @@ async def check_pay(callback: CallbackQuery):
             until = (datetime.datetime.now() + datetime.timedelta(days=days)).isoformat()
             await update_user(payment['user_id'], is_premium=1, premium_until=until)
             await callback.message.answer(
-                "🎉 <b>Оплата прошла успешно! Премиум активирован!</b>\n\n"
+                f"🎉 <b>Оплата прошла успешно! Премиум активирован!</b>\n\n"
                 f"Дней премиума: {days}\n"
                 f"Действует до: {datetime.datetime.fromisoformat(until).strftime('%d.%m.%Y')}", 
                 parse_mode=ParseMode.HTML, 
@@ -1346,18 +1754,25 @@ async def edit_process(callback: CallbackQuery, state: FSMContext):
         "age": "🔢 Введи возраст:", 
         "city": "🏙️ Выбери город:", 
         "bio": "📝 О себе:", 
-        "looking": "👀 Кого ищешь?"
+        "looking": "👀 Кого ищешь?",
+        "goal": "🎯 Выбери цель знакомства:",
+        "interests": "🎨 Выбери интересы:"
     }
     if field not in prompts:
         return await callback.answer("Ошибка.")
-    
+
     await state.update_data(edit_field=field)
     await state.set_state(EditProfile.new_value)
-    
+
     if field == "city": 
         await callback.message.answer(prompts[field], reply_markup=city_kb())
     elif field == "looking": 
         await callback.message.answer(prompts[field], reply_markup=looking_for_kb())
+    elif field == "goal":
+        await callback.message.answer(prompts[field], reply_markup=reg_goal_kb())
+    elif field == "interests":
+        await state.update_data(edit_interests=set())
+        await callback.message.answer(prompts[field], reply_markup=reg_interests_kb())
     else: 
         await callback.message.answer(prompts[field])
     await callback.answer()
@@ -1368,11 +1783,11 @@ async def save_edit(message: Message, state: FSMContext):
     field = data.get("edit_field")
     if not field:
         return await state.clear()
-    
+
     user = await get_user(message.from_user.id)
     if not user:
         return await state.clear()
-    
+
     if field == "photo":
         if not message.photo: 
             return await message.answer("Нужно отправить фото:")
@@ -1401,10 +1816,48 @@ async def save_edit(message: Message, state: FSMContext):
         if message.text not in looks: 
             return await message.answer("Используй кнопки:", reply_markup=looking_for_kb())
         await update_user(user['telegram_id'], looking_for=looks[message.text])
+    elif field == "goal":
+        reverse_goals = {v: k for k, v in GOALS_MAP.items()}
+        found = None
+        for key, val in GOALS_MAP.items():
+            if val == message.text:
+                found = key
+                break
+        if not found:
+            return await message.answer("Используй кнопки:", reply_markup=reg_goal_kb())
+        await update_user(user['telegram_id'], goal=found)
+    elif field == "interests":
+        return await message.answer("Используй кнопки для выбора интересов.", reply_markup=reg_interests_kb())
 
     likes_to_me = await get_likes_to_me_count(message.from_user.id)
     await message.answer("✅ Сохранено!", reply_markup=main_menu_kb(get_premium_status(user), likes_to_me))
     await state.clear()
+
+@dp.callback_query(F.data.startswith("reg_int_"), EditProfile.new_value)
+async def edit_interests_cb(callback: CallbackQuery, state: FSMContext):
+    data = callback.data.replace("reg_int_", "")
+    if data == "done":
+        current = await state.get_data()
+        selected = current.get("edit_interests", set())
+        if not selected:
+            return await callback.answer("Выбери хотя бы один!", show_alert=True)
+        user = await get_user(callback.from_user.id)
+        await update_user(user['telegram_id'], interests=",".join(selected))
+        likes_to_me = await get_likes_to_me_count(callback.from_user.id)
+        await callback.message.edit_text("✅ Интересы обновлены!")
+        await callback.message.answer("Главное меню", reply_markup=main_menu_kb(get_premium_status(user), likes_to_me))
+        await state.clear()
+        return
+
+    current = await state.get_data()
+    selected = set(current.get("edit_interests", []))
+    if data in selected:
+        selected.remove(data)
+    else:
+        selected.add(data)
+    await state.update_data(edit_interests=selected)
+    await callback.message.edit_reply_markup(reply_markup=reg_interests_kb(selected))
+    await callback.answer()
 
 @dp.callback_query(F.data == "back_menu")
 async def back_menu_cb(callback: CallbackQuery):
@@ -1435,11 +1888,11 @@ async def start_broadcast(callback: CallbackQuery, state: FSMContext):
 async def process_broadcast(message: Message, state: FSMContext):
     if message.from_user.id != ADMIN_ID: 
         return await state.clear()
-    
+
     async with aiosqlite.connect(DB_NAME) as db:
         async with db.execute("SELECT telegram_id FROM users WHERE is_active = 1") as cursor:
             users = await cursor.fetchall()
-            
+
     await message.answer(f"⏳ Рассылка для {len(users)} пользователей...")
     success = 0
     for u in users:
@@ -1453,7 +1906,7 @@ async def process_broadcast(message: Message, state: FSMContext):
             await asyncio.sleep(0.05)
         except Exception: 
             pass
-        
+
     await message.answer(f"✅ Успешно доставлено: {success}/{len(users)}")
     await state.clear()
 
