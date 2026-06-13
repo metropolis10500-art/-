@@ -72,7 +72,7 @@ users_db: Dict[int, dict] = {}
 profiles_db: Dict[int, dict] = {}
 likes_db: Dict[int, List[int]] = {}
 matches_db: Dict[int, List[int]] = {}
-viewed_db: Dict[int, Set[int]] = {} # ИСТОРИЯ ПРОСМОТРОВ
+viewed_db: Dict[int, Set[int]] = {} 
 reports_db: Dict[int, List[dict]] = {}
 pending_payments: Dict[str, dict] = {}
 user_current_view: Dict[int, int] = {}
@@ -220,7 +220,6 @@ async def show_next_profile(user_id: int, message: Message):
 
     target_id, target_profile = candidates[0]
     
-    # Отмечаем как просмотренный
     if user_id not in viewed_db:
         viewed_db[user_id] = set()
     viewed_db[user_id].add(target_id)
@@ -238,7 +237,6 @@ async def show_next_profile(user_id: int, message: Message):
     else:
         await message.answer(text, reply_markup=get_inline_profile_actions(target_id, has_liked))
 
-# ========== YOOMONEY API ==========
 async def check_yoomoney_payment(label: str) -> Optional[dict]:
     url = "https://yoomoney.ru/api/operation-history"
     headers = {
@@ -261,11 +259,11 @@ async def check_yoomoney_payment(label: str) -> Optional[dict]:
         logger.error(f"YooMoney API error: {e}")
     return None
 
-# ========== КОМАНДЫ ==========
+# ========== КОМАНДЫ РЕГИСТРАЦИИ ==========
 @dp.message(CommandStart())
 async def cmd_start(message: Message, state: FSMContext):
     await state.clear()
-    user_id = message.from_user.id
+    user_id = message.chat.id
     user = get_user(user_id)
 
     if user["registered"] and get_profile(user_id):
@@ -277,10 +275,9 @@ async def cmd_start(message: Message, state: FSMContext):
 
     welcome_text = (
         "✨ <b>Добро пожаловать в LoveSpark!</b> ✨\n\n"
-        "🔥 <b>Лучший бот знакомств для всей России!</b>\n\n"
+        "🔥 <b>Лучший бот знакомств!</b>\n\n"
         "❤️ Находи свою половинку среди тысяч пользователей\n"
-        "💬 Общайся без ограничений с премиумом\n"
-        "🎯 Умные фильтры поиска по городу и интересам\n"
+        "💬 Общайся без ограничений\n"
         "🔒 Полная безопасность и анонимность\n\n"
         "<b>Нажми кнопку ниже, чтобы начать регистрацию анкеты 👇</b>"
     )
@@ -382,7 +379,6 @@ async def reg_bio(message: Message, state: FSMContext):
     await message.answer(
         "📸 Отправь свое фото для анкеты:\n\n"
         "<i>Желательно хорошее качество, где видно лицо 😊</i>\n"
-        "<i>Можно отправить несколько фото</i>"
     )
     await state.set_state(Registration.photo)
 
@@ -394,7 +390,9 @@ async def reg_photo(message: Message, state: FSMContext):
     photos_list.append(photo_file_id)
     await state.update_data(photos=photos_list)
 
-    limits = get_limits(message.from_user.id)
+    user_id = message.chat.id # Безопасное получение ID 
+    limits = get_limits(user_id)
+    
     if len(photos_list) < limits["profile_photos"]:
         kb = InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="✅ Это все, продолжить", callback_data="photos_done")],
@@ -402,7 +400,8 @@ async def reg_photo(message: Message, state: FSMContext):
         ])
         await message.answer(f"📷 Фото {len(photos_list)}/{limits['profile_photos']} добавлено. Хочешь добавить еще?", reply_markup=kb)
     else:
-        await finish_registration(message, state)
+        # Передаем явно user_id
+        await finish_registration(message, user_id, state)
 
 @dp.callback_query(F.data == "more_photos")
 async def more_photos(callback: CallbackQuery):
@@ -412,12 +411,12 @@ async def more_photos(callback: CallbackQuery):
 @dp.callback_query(F.data == "photos_done")
 async def photos_done(callback: CallbackQuery, state: FSMContext):
     await callback.message.delete()
-    await finish_registration(callback.message, state)
+    # Передаем ID пользователя, который нажал кнопку (а не бота!)
+    await finish_registration(callback.message, callback.from_user.id, state)
     await callback.answer()
 
-async def finish_registration(message: Message, state: FSMContext):
+async def finish_registration(message: Message, user_id: int, state: FSMContext):
     data = await state.get_data()
-    user_id = message.from_user.id
     
     if not data.get("name"): 
         return
@@ -463,7 +462,7 @@ async def reg_invalid_input(message: Message):
 # ========== ГЛАВНОЕ МЕНЮ ==========
 @dp.message(F.text == "🔍 Смотреть анкеты")
 async def browse_profiles(message: Message):
-    user_id = message.from_user.id
+    user_id = message.chat.id
     reset_daily_limits(user_id)
 
     if not get_profile(user_id):
@@ -487,7 +486,6 @@ async def like_profile(callback: CallbackQuery):
         likes_db[target_id].append(user_id)
         user["daily_likes"] += 1
 
-    # Взаимный лайк
     if target_id in likes_db.get(user_id, []):
         if user_id not in matches_db.get(target_id, []):
             matches_db.setdefault(target_id, []).append(user_id)
@@ -550,7 +548,7 @@ async def send_direct_message(message: Message, state: FSMContext):
     if not target_id:
         return await state.clear()
 
-    user_id = message.from_user.id
+    user_id = message.chat.id
     reset_daily_limits(user_id)
     user = get_user(user_id)
 
@@ -581,7 +579,7 @@ async def send_direct_message(message: Message, state: FSMContext):
 
 @dp.message(MessageState.target_id)
 async def invalid_direct_message(message: Message):
-    await message.answer("❌ Бот пока поддерживает только текстовые сообщения. Пожалуйста, отправь текст.")
+    await message.answer("❌ Бот пока поддерживает только текстовые сообщения.")
 
 @dp.callback_query(F.data.startswith("skip_"))
 async def skip_profile(callback: CallbackQuery):
@@ -641,7 +639,7 @@ async def report_reason(callback: CallbackQuery, state: FSMContext):
 # ========== ПРЕМИУМ ==========
 @dp.message(F.text.in_(["💎 Премиум", "👑 Мой премиум"]))
 async def premium_menu(message: Message):
-    user_id = message.from_user.id
+    user_id = message.chat.id
     if is_premium(user_id):
         premium_until = users_db[user_id]["premium_until"]
         return await message.answer(
@@ -675,7 +673,8 @@ async def premium_menu(message: Message):
 
 @dp.callback_query(F.data.startswith("buy_"))
 async def buy_premium(callback: CallbackQuery):
-    plan_key = callback.data.split("_")[1]
+    # ИСПРАВЛЕНИЕ 1: Использование replace вместо split
+    plan_key = callback.data.replace("buy_", "")
     plan = PREMIUM_PRICES.get(plan_key)
     if not plan: return await callback.answer("❌ Ошибка", show_alert=True)
 
@@ -707,7 +706,7 @@ async def buy_premium(callback: CallbackQuery):
 
 @dp.callback_query(F.data.startswith("check_"))
 async def check_payment(callback: CallbackQuery):
-    payment_id = callback.data.split("check_")[1]
+    payment_id = callback.data.replace("check_", "")
     payment = pending_payments.get(payment_id)
     if not payment: return await callback.answer("❌ Платеж не найден", show_alert=True)
 
@@ -735,7 +734,7 @@ async def check_payment(callback: CallbackQuery):
 # ========== МОЯ АНКЕТА ==========
 @dp.message(F.text == "👤 Моя анкета")
 async def my_profile(message: Message):
-    user_id = message.from_user.id
+    user_id = message.chat.id # ИСПРАВЛЕНИЕ 2: Использование chat.id
     profile = get_profile(user_id)
     if not profile: return await message.answer("❌ У тебя нет анкеты. Напиши /start")
 
@@ -803,7 +802,7 @@ async def edit_field(callback: CallbackQuery, state: FSMContext):
 async def edit_value(message: Message, state: FSMContext):
     data = await state.get_data()
     field = data.get("edit_field")
-    user_id = message.from_user.id
+    user_id = message.chat.id
 
     if not field or user_id not in profiles_db: return await state.clear()
 
@@ -838,7 +837,7 @@ async def edit_looking(callback: CallbackQuery):
 # ========== ЛАЙКИ И ЧАТЫ ==========
 @dp.message(F.text == "❤️ Мои лайки")
 async def my_likes(message: Message):
-    user_id = message.from_user.id
+    user_id = message.chat.id
     likes = likes_db.get(user_id, [])
 
     if not likes:
@@ -859,7 +858,7 @@ async def my_likes(message: Message):
 
 @dp.message(F.text == "💬 Мои чаты")
 async def my_chats(message: Message):
-    user_id = message.from_user.id
+    user_id = message.chat.id
     matches = matches_db.get(user_id, [])
     if not matches: return await message.answer("💬 <b>Пока нет взаимных симпатий.</b>\n\nСтавь лайки анкетам!")
 
@@ -915,7 +914,7 @@ async def cancel_delete(callback: CallbackQuery):
 # ========== СТАТИСТИКА ==========
 @dp.message(F.text == "📊 Статистика")
 async def stats(message: Message):
-    user_id = message.from_user.id
+    user_id = message.chat.id
     if not get_profile(user_id): return await message.answer("❌ Сначала создай анкету!")
 
     days_in_bot = (datetime.now() - users_db[user_id]["created_at"]).days
@@ -965,7 +964,7 @@ async def premium_info_cb(callback: CallbackQuery):
 # ========== АДМИН ПАНЕЛЬ ==========
 @dp.message(Command("admin"))
 async def admin_panel(message: Message):
-    if message.from_user.id != ADMIN_ID: return
+    if message.chat.id != ADMIN_ID: return
     kb = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="📢 Рассылка всем", callback_data="admin_broadcast")],
         [InlineKeyboardButton(text="📊 Статистика бота", callback_data="admin_stats")],
@@ -997,9 +996,8 @@ async def admin_broadcast(callback: CallbackQuery, state: FSMContext):
 
 @dp.message(AdminStates.broadcast)
 async def do_broadcast(message: Message, state: FSMContext):
-    if message.from_user.id != ADMIN_ID: return
+    if message.chat.id != ADMIN_ID: return
     sent, failed = 0, 0
-    # Используем list(users_db.keys()) чтобы избежать RuntimeError при итерации
     for user_id in list(users_db.keys()):
         try:
             await bot.send_message(user_id, f"📢 <b>Сообщение от администрации:</b>\n\n{message.html_text}")
@@ -1031,9 +1029,8 @@ async def cmd_search(message: Message): await browse_profiles(message)
 
 @dp.message()
 async def unknown_message(message: Message, state: FSMContext):
-    # Если юзер не находится в процессе заполнения чего-либо, показываем ему меню
     if await state.get_state() is None:
-        await message.answer("❓ Я тебя не понял. Используй кнопки меню или команды:\n/start — начать\n/help — помощь", reply_markup=get_main_menu(message.from_user.id))
+        await message.answer("❓ Я тебя не понял. Используй кнопки меню или команды:\n/start — начать\n/help — помощь", reply_markup=get_main_menu(message.chat.id))
 
 # ========== ЗАПУСК ==========
 async def set_commands():
